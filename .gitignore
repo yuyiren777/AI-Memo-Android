@@ -1,0 +1,12 @@
+.gradle/
+.gradle-user-home/
+.idea/
+local.properties
+build/
+app/build/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+.unused-source-app-icon.png
+release/*.apk
