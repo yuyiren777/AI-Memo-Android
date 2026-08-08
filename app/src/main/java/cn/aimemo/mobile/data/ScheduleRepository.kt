@@ -31,9 +31,26 @@ class ScheduleRepository(
         save(schedule.copy(completed = completed))
     }
 
+    suspend fun setCompleted(schedules: List<Schedule>, completed: Boolean) = withContext(Dispatchers.IO) {
+        schedules.distinctBy(Schedule::id).forEach { schedule ->
+            val saved = database.save(schedule.copy(completed = completed))
+            reminderScheduler.cancel(saved.id)
+            if (!saved.completed) reminderScheduler.schedule(saved)
+        }
+        _schedules.value = database.listAll()
+    }
+
     suspend fun delete(schedule: Schedule) = withContext(Dispatchers.IO) {
         reminderScheduler.cancel(schedule.id)
         database.delete(schedule.id)
+        _schedules.value = database.listAll()
+    }
+
+    suspend fun delete(schedules: List<Schedule>) = withContext(Dispatchers.IO) {
+        schedules.distinctBy(Schedule::id).forEach { schedule ->
+            reminderScheduler.cancel(schedule.id)
+            database.delete(schedule.id)
+        }
         _schedules.value = database.listAll()
     }
 
@@ -41,6 +58,25 @@ class ScheduleRepository(
         database.listAll().filterNot { it.completed }.forEach(reminderScheduler::schedule)
     }
 
+    suspend fun reminderLogs(): List<ReminderLog> = withContext(Dispatchers.IO) {
+        database.listReminderLogs()
+    }
+
+    suspend fun deleteReminderLog(id: Long) = withContext(Dispatchers.IO) {
+        database.deleteReminderLog(id)
+    }
+
+    suspend fun advanceRepeated(schedule: Schedule) {
+        val date = schedule.date ?: return
+        val nextDate = when {
+            schedule.repeatRule == "daily" -> date.plusDays(1)
+            schedule.repeatRule.startsWith("weekly") -> date.plusWeeks(1)
+            schedule.repeatRule.startsWith("monthly") -> runCatching { date.plusMonths(1) }
+                .getOrElse { date.plusMonths(1).withDayOfMonth(1) }
+            else -> return
+        }
+        save(schedule.copy(date = nextDate, completed = false))
+    }
+
     fun undatedPending(): List<Schedule> = _schedules.value.filter { !it.completed && it.date == null }
 }
-

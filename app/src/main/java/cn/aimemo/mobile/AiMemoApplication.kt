@@ -18,6 +18,7 @@ class AiMemoApplication : Application() {
         super.onCreate()
         preferences = AppPreferences(this)
         database = ScheduleDatabase(this)
+        database.setWriteAheadLoggingEnabled(true)
         repository = ScheduleRepository(
             database = database,
             reminderScheduler = ReminderScheduler(this, preferences),
@@ -25,4 +26,3 @@ class AiMemoApplication : Application() {
         NotificationHelper.createChannel(this)
     }
 }
-

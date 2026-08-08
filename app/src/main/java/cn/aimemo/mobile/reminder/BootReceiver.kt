@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in SUPPORTED_ACTIONS) return
+        ReminderGuardService.start(context)
         val pendingResult = goAsync()
         val application = context.applicationContext as AiMemoApplication
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {

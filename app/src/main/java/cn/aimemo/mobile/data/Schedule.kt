@@ -1,5 +1,6 @@
 package cn.aimemo.mobile.data
 
+import androidx.compose.runtime.Immutable
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -13,6 +14,7 @@ enum class Urgency(val value: Int, val label: String) {
     }
 }
 
+@Immutable
 data class Schedule(
     val id: Long = 0,
     val title: String,
@@ -20,8 +22,19 @@ data class Schedule(
     val location: String = "",
     val date: LocalDate? = null,
     val startTime: LocalTime? = null,
+    val endTime: LocalTime? = null,
+    val repeatRule: String = "none",
     val urgency: Urgency = Urgency.NORMAL,
     val completed: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
+@Immutable
+data class ReminderLog(
+    val id: Long = 0,
+    val scheduleId: Long,
+    val scheduleTitle: String,
+    val stage: String,
+    val message: String,
+    val createdAt: Long = System.currentTimeMillis(),
+)

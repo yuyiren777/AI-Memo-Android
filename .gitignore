@@ -1,5 +1,6 @@
 .gradle/
 .gradle-user-home/
+.kotlin/
 .idea/
 local.properties
 build/
@@ -9,4 +10,4 @@ captures/
 .externalNativeBuild/
 .cxx/
 .unused-source-app-icon.png
-release/*.apk
+release/

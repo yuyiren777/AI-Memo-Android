@@ -3,6 +3,7 @@ package cn.aimemo.mobile.ui
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.EventNote
 import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
@@ -13,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -21,46 +23,88 @@ import androidx.compose.ui.Modifier
 import cn.aimemo.mobile.data.Schedule
 
 private enum class AppSection(val label: String) {
-    SCHEDULES("日程"),
-    ADD("添加"),
-    SETTINGS("设置"),
+    SCHEDULES("日程"), ADD("添加"), HISTORY("记录"), SETTINGS("设置")
 }
 
 @Composable
 fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
     var section by rememberSaveable { mutableStateOf(AppSection.SCHEDULES) }
     var editingSchedule by remember { mutableStateOf<Schedule?>(null) }
+    var editingRecognizedIndex by remember { mutableIntStateOf(-1) }
 
-    state.error?.let { message ->
+    val apiKeyRequired = state.error?.contains("API Key", ignoreCase = true) == true
+
+    if (apiKeyRequired) {
         AlertDialog(
-            onDismissRequest = viewModel::consumeError,
-            title = { Text("操作未完成") },
+            onDismissRequest = viewModel::consumeNotice,
+            title = { Text("使用 AI 前还差一步（也可以手动添加）") },
+            text = {
+                Text("AI 识别需要先填写智谱 API Key。如果暂时不想接入 AI，可以直接手动记录日程，其他功能不受影响。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.consumeNotice()
+                        editingSchedule = null
+                        editingRecognizedIndex = -1
+                        section = AppSection.SETTINGS
+                    },
+                ) { Text("去填写 API Key") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.consumeNotice()
+                        editingSchedule = Schedule(title = "")
+                        editingRecognizedIndex = -1
+                    },
+                ) { Text("手动添加日程") }
+            },
+        )
+    } else if (state.suggestModelSwitch) {
+        AlertDialog(
+            onDismissRequest = viewModel::consumeNotice,
+            title = { Text("模型连接超时") },
+            text = { Text("当前模型暂时没有响应。是否前往模型配置页切换模型？也可以稍后再试。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.consumeNotice()
+                        editingSchedule = null
+                        editingRecognizedIndex = -1
+                        section = AppSection.SETTINGS
+                    },
+                ) { Text("去切换模型") }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::consumeNotice) { Text("暂不切换") }
+            },
+        )
+    } else (state.error ?: state.message)?.let { message ->
+        AlertDialog(
+            onDismissRequest = viewModel::consumeNotice,
+            title = { Text(if (state.error != null) "暂时未能完成" else "提示") },
             text = { Text(message) },
-            confirmButton = { TextButton(onClick = viewModel::consumeError) { Text("知道了") } },
+            confirmButton = { TextButton(onClick = viewModel::consumeNotice) { Text("知道了") } },
         )
     }
 
     Scaffold(
         bottomBar = {
             BottomAppBar {
-                NavigationBarItem(
-                    selected = section == AppSection.SCHEDULES,
-                    onClick = { section = AppSection.SCHEDULES; editingSchedule = null },
-                    icon = { Icon(Icons.AutoMirrored.Outlined.EventNote, null) },
-                    label = { Text(AppSection.SCHEDULES.label) },
-                )
-                NavigationBarItem(
-                    selected = section == AppSection.ADD,
-                    onClick = { section = AppSection.ADD; editingSchedule = null },
-                    icon = { Icon(Icons.Outlined.AddCircleOutline, null) },
-                    label = { Text(AppSection.ADD.label) },
-                )
-                NavigationBarItem(
-                    selected = section == AppSection.SETTINGS,
-                    onClick = { section = AppSection.SETTINGS; editingSchedule = null },
-                    icon = { Icon(Icons.Outlined.Settings, null) },
-                    label = { Text(AppSection.SETTINGS.label) },
-                )
+                listOf(
+                    Triple(AppSection.SCHEDULES, Icons.AutoMirrored.Outlined.EventNote, "日程"),
+                    Triple(AppSection.ADD, Icons.Outlined.AddCircleOutline, "添加"),
+                    Triple(AppSection.HISTORY, Icons.Outlined.History, "提醒记录"),
+                    Triple(AppSection.SETTINGS, Icons.Outlined.Settings, "设置"),
+                ).forEach { (target, icon, description) ->
+                    NavigationBarItem(
+                        selected = section == target,
+                        onClick = { section = target; editingSchedule = null; editingRecognizedIndex = -1 },
+                        icon = { Icon(icon, description) },
+                        label = { Text(target.label) },
+                    )
+                }
             }
         }
     ) { padding ->
@@ -77,6 +121,16 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                     }
                 },
             )
+            editingRecognizedIndex >= 0 -> ScheduleEditorScreen(
+                modifier = Modifier,
+                contentPadding = padding,
+                initial = state.recognized.getOrNull(editingRecognizedIndex),
+                onCancel = { editingRecognizedIndex = -1 },
+                onSave = {
+                    viewModel.updateRecognized(editingRecognizedIndex, it)
+                    editingRecognizedIndex = -1
+                },
+            )
             section == AppSection.SCHEDULES -> ScheduleListScreen(
                 contentPadding = padding,
                 state = state,
@@ -84,21 +138,32 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                 onEdit = { editingSchedule = it },
                 onCompleted = viewModel::setCompleted,
                 onDelete = viewModel::delete,
+                onBatchCompleted = viewModel::setSchedulesCompleted,
+                onBatchDelete = viewModel::deleteSchedules,
+                onImport = viewModel::importSchedules,
             )
-            section == AppSection.ADD -> ScheduleEditorScreen(
-                modifier = Modifier,
+            section == AppSection.ADD -> SmartAddScreen(
                 contentPadding = padding,
-                initial = null,
-                onCancel = { section = AppSection.SCHEDULES },
-                onSave = { schedule ->
-                    viewModel.save(schedule) { section = AppSection.SCHEDULES }
-                },
+                state = state,
+                onRecognizeText = viewModel::recognizeText,
+                onRecognizeImages = viewModel::recognizeImages,
+                onManualAdd = { editingSchedule = Schedule(title = "") },
+                onEditResult = { editingRecognizedIndex = it },
+                onRemoveResult = viewModel::removeRecognized,
+                onSaveAll = { viewModel.saveRecognized { section = AppSection.SCHEDULES } },
+            )
+            section == AppSection.HISTORY -> ReminderHistoryScreen(
+                contentPadding = padding,
+                logs = state.reminderLogs,
+                onDelete = viewModel::deleteReminderLog,
             )
             else -> SettingsScreen(
                 contentPadding = padding,
                 state = state,
                 onDarkModeChanged = viewModel::setDarkMode,
-                onReminderMinutesChanged = viewModel::setReminderLeadMinutes,
+                onReminderSettingsChanged = viewModel::saveReminderSettings,
+                onModelSettingsChanged = viewModel::saveModelSettings,
+                onTestConnection = viewModel::testConnection,
             )
         }
     }

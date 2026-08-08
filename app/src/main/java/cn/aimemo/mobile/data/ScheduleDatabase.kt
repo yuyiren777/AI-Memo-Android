@@ -20,6 +20,8 @@ class ScheduleDatabase(context: Context) :
                 location TEXT NOT NULL DEFAULT '',
                 schedule_date TEXT,
                 start_time TEXT,
+                end_time TEXT,
+                repeat_rule TEXT NOT NULL DEFAULT 'none',
                 urgency INTEGER NOT NULL DEFAULT 0,
                 completed INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL
@@ -29,9 +31,16 @@ class ScheduleDatabase(context: Context) :
         database.execSQL(
             "CREATE INDEX idx_schedules_date ON schedules(completed, schedule_date, start_time)"
         )
+        createReminderLogTable(database)
     }
 
-    override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            database.execSQL("ALTER TABLE schedules ADD COLUMN end_time TEXT")
+            database.execSQL("ALTER TABLE schedules ADD COLUMN repeat_rule TEXT NOT NULL DEFAULT 'none'")
+            createReminderLogTable(database)
+        }
+    }
 
     fun listAll(): List<Schedule> {
         val schedules = mutableListOf<Schedule>()
@@ -50,6 +59,8 @@ class ScheduleDatabase(context: Context) :
             val locationIndex = cursor.getColumnIndexOrThrow("location")
             val dateIndex = cursor.getColumnIndexOrThrow("schedule_date")
             val timeIndex = cursor.getColumnIndexOrThrow("start_time")
+            val endTimeIndex = cursor.getColumnIndexOrThrow("end_time")
+            val repeatIndex = cursor.getColumnIndexOrThrow("repeat_rule")
             val urgencyIndex = cursor.getColumnIndexOrThrow("urgency")
             val completedIndex = cursor.getColumnIndexOrThrow("completed")
             val createdIndex = cursor.getColumnIndexOrThrow("created_at")
@@ -61,6 +72,8 @@ class ScheduleDatabase(context: Context) :
                     location = cursor.getString(locationIndex),
                     date = cursor.getStringOrNull(dateIndex)?.let(LocalDate::parse),
                     startTime = cursor.getStringOrNull(timeIndex)?.let(LocalTime::parse),
+                    endTime = cursor.getStringOrNull(endTimeIndex)?.let(LocalTime::parse),
+                    repeatRule = cursor.getString(repeatIndex),
                     urgency = Urgency.fromValue(cursor.getInt(urgencyIndex)),
                     completed = cursor.getInt(completedIndex) == 1,
                     createdAt = cursor.getLong(createdIndex),
@@ -87,6 +100,8 @@ class ScheduleDatabase(context: Context) :
             location = cursor.getString(cursor.getColumnIndexOrThrow("location")),
             date = cursor.getStringOrNull(cursor.getColumnIndexOrThrow("schedule_date"))?.let(LocalDate::parse),
             startTime = cursor.getStringOrNull(cursor.getColumnIndexOrThrow("start_time"))?.let(LocalTime::parse),
+            endTime = cursor.getStringOrNull(cursor.getColumnIndexOrThrow("end_time"))?.let(LocalTime::parse),
+            repeatRule = cursor.getString(cursor.getColumnIndexOrThrow("repeat_rule")),
             urgency = Urgency.fromValue(cursor.getInt(cursor.getColumnIndexOrThrow("urgency"))),
             completed = cursor.getInt(cursor.getColumnIndexOrThrow("completed")) == 1,
             createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
@@ -100,6 +115,8 @@ class ScheduleDatabase(context: Context) :
             put("location", schedule.location.trim())
             putNullable("schedule_date", schedule.date?.toString())
             putNullable("start_time", schedule.startTime?.withSecond(0)?.withNano(0)?.toString())
+            putNullable("end_time", schedule.endTime?.withSecond(0)?.withNano(0)?.toString())
+            put("repeat_rule", schedule.repeatRule)
             put("urgency", schedule.urgency.value)
             put("completed", if (schedule.completed) 1 else 0)
             put("created_at", schedule.createdAt)
@@ -114,7 +131,54 @@ class ScheduleDatabase(context: Context) :
     }
 
     fun delete(id: Long) {
+        writableDatabase.delete("reminder_logs", "schedule_id = ?", arrayOf(id.toString()))
         writableDatabase.delete("schedules", "id = ?", arrayOf(id.toString()))
+    }
+
+    fun addReminderLog(schedule: Schedule, stage: String, message: String) {
+        writableDatabase.insertOrThrow("reminder_logs", null, ContentValues().apply {
+            put("schedule_id", schedule.id)
+            put("schedule_title", schedule.title)
+            put("stage", stage)
+            put("message", message)
+            put("created_at", System.currentTimeMillis())
+        })
+    }
+
+    fun listReminderLogs(): List<ReminderLog> {
+        val result = mutableListOf<ReminderLog>()
+        readableDatabase.query("reminder_logs", null, null, null, null, null, "created_at DESC").use { cursor ->
+            while (cursor.moveToNext()) {
+                result += ReminderLog(
+                    id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                    scheduleId = cursor.getLong(cursor.getColumnIndexOrThrow("schedule_id")),
+                    scheduleTitle = cursor.getString(cursor.getColumnIndexOrThrow("schedule_title")),
+                    stage = cursor.getString(cursor.getColumnIndexOrThrow("stage")),
+                    message = cursor.getString(cursor.getColumnIndexOrThrow("message")),
+                    createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+                )
+            }
+        }
+        return result
+    }
+
+    fun deleteReminderLog(id: Long) {
+        writableDatabase.delete("reminder_logs", "id = ?", arrayOf(id.toString()))
+    }
+
+    private fun createReminderLogTable(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS reminder_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                schedule_id INTEGER NOT NULL,
+                schedule_title TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                message TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
     }
 
     private fun android.database.Cursor.getStringOrNull(index: Int): String? =
@@ -126,7 +190,6 @@ class ScheduleDatabase(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "ai_memo_mobile.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 2
     }
 }
-

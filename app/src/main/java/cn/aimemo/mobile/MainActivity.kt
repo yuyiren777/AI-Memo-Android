@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.viewModels
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,18 +17,25 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.aimemo.mobile.reminder.NotificationHelper
+import cn.aimemo.mobile.reminder.ReminderGuardService
 import cn.aimemo.mobile.ui.AiMemoApp
 import cn.aimemo.mobile.ui.AppViewModel
 import cn.aimemo.mobile.ui.theme.AiMemoTheme
 
 class MainActivity : ComponentActivity() {
+    private val appViewModel: AppViewModel by viewModels()
+
+    override fun onResume() {
+        super.onResume()
+        appViewModel.refresh()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ReminderGuardService.start(this)
         enableEdgeToEdge()
         setContent {
-            val appViewModel: AppViewModel = viewModel()
             val state by appViewModel.uiState.collectAsState()
             var launchReminderShown by remember { mutableStateOf(false) }
             var notificationPermissionGranted by remember {
