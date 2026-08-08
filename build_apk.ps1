@@ -12,7 +12,7 @@ if (-not $JavaCandidates) {
 $env:JAVA_HOME = $JavaCandidates[0]
 $env:GRADLE_USER_HOME = Join-Path $ProjectRoot '.gradle-user-home'
 $output = Join-Path $ProjectRoot 'app\build\outputs\apk\release\app-release.apk'
-$release = Join-Path $ProjectRoot 'release\AI-Memo-Android-v0.4.4.apk'
+$release = Join-Path $ProjectRoot 'release\AI-Memo-Android-v0.5.0.apk'
 
 Push-Location $ProjectRoot
 try {

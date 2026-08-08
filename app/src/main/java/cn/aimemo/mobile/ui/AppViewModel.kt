@@ -8,6 +8,7 @@ import cn.aimemo.mobile.AiMemoApplication
 import cn.aimemo.mobile.ai.ScheduleExtractor
 import cn.aimemo.mobile.ai.AiTimeoutException
 import cn.aimemo.mobile.ai.ZhipuAiClient
+import cn.aimemo.mobile.data.AccountEntry
 import cn.aimemo.mobile.data.ReminderLog
 import cn.aimemo.mobile.data.Schedule
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +18,7 @@ import kotlinx.coroutines.launch
 
 data class AppUiState(
     val schedules: List<Schedule> = emptyList(),
+    val accountEntries: List<AccountEntry> = emptyList(),
     val reminderLogs: List<ReminderLog> = emptyList(),
     val loading: Boolean = true,
     val recognizing: Boolean = false,
@@ -39,6 +41,7 @@ data class AppUiState(
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as AiMemoApplication
     private val repository = app.repository
+    private val accountingRepository = app.accountingRepository
     private val aiClient = ZhipuAiClient(app.preferences)
     private val _uiState = MutableStateFlow(readPreferences())
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
@@ -48,6 +51,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.schedules.collect { schedules ->
                 _uiState.value = _uiState.value.copy(schedules = schedules, loading = false)
+            }
+        }
+        viewModelScope.launch {
+            accountingRepository.entries.collect { entries ->
+                _uiState.value = _uiState.value.copy(accountEntries = entries)
             }
         }
         refresh()
@@ -72,6 +80,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching {
                 repository.refresh()
+                accountingRepository.refresh()
                 repository.reminderLogs()
             }.onSuccess { logs ->
                 _uiState.value = _uiState.value.copy(reminderLogs = logs, loading = false)
@@ -267,6 +276,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.deleteReminderLog(id)
             _uiState.value = _uiState.value.copy(reminderLogs = repository.reminderLogs())
+        }
+    }
+
+    fun saveAccountEntry(entry: AccountEntry, onSaved: () -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { accountingRepository.save(entry) }
+                .onSuccess { onSaved() }
+                .onFailure(::showError)
+        }
+    }
+
+    fun deleteAccountEntry(entry: AccountEntry) {
+        viewModelScope.launch {
+            runCatching { accountingRepository.delete(entry) }
+                .onFailure(::showError)
         }
     }
 

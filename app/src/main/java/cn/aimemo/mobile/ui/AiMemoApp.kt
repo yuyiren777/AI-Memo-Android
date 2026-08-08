@@ -3,6 +3,7 @@ package cn.aimemo.mobile.ui
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.EventNote
 import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
@@ -21,15 +22,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import cn.aimemo.mobile.data.Schedule
+import cn.aimemo.mobile.data.AccountEntry
+import cn.aimemo.mobile.data.AccountEntryType
 
 private enum class AppSection(val label: String) {
-    SCHEDULES("日程"), ADD("添加"), HISTORY("记录"), SETTINGS("设置")
+    SCHEDULES("日程"), ADD("添加"), ACCOUNTING("记账"), HISTORY("记录"), SETTINGS("设置")
 }
 
 @Composable
 fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
     var section by rememberSaveable { mutableStateOf(AppSection.SCHEDULES) }
     var editingSchedule by remember { mutableStateOf<Schedule?>(null) }
+    var editingAccountEntry by remember { mutableStateOf<AccountEntry?>(null) }
     var editingRecognizedIndex by remember { mutableIntStateOf(-1) }
 
     val apiKeyRequired = state.error?.contains("API Key", ignoreCase = true) == true
@@ -95,12 +99,18 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                 listOf(
                     Triple(AppSection.SCHEDULES, Icons.AutoMirrored.Outlined.EventNote, "日程"),
                     Triple(AppSection.ADD, Icons.Outlined.AddCircleOutline, "添加"),
+                    Triple(AppSection.ACCOUNTING, Icons.Outlined.AccountBalanceWallet, "记账"),
                     Triple(AppSection.HISTORY, Icons.Outlined.History, "提醒记录"),
                     Triple(AppSection.SETTINGS, Icons.Outlined.Settings, "设置"),
                 ).forEach { (target, icon, description) ->
                     NavigationBarItem(
                         selected = section == target,
-                        onClick = { section = target; editingSchedule = null; editingRecognizedIndex = -1 },
+                        onClick = {
+                            section = target
+                            editingSchedule = null
+                            editingAccountEntry = null
+                            editingRecognizedIndex = -1
+                        },
                         icon = { Icon(icon, description) },
                         label = { Text(target.label) },
                     )
@@ -131,6 +141,17 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                     editingRecognizedIndex = -1
                 },
             )
+            editingAccountEntry != null -> AccountEntryEditorScreen(
+                contentPadding = padding,
+                initial = requireNotNull(editingAccountEntry),
+                onCancel = { editingAccountEntry = null },
+                onSave = { entry ->
+                    viewModel.saveAccountEntry(entry) {
+                        editingAccountEntry = null
+                        section = AppSection.ACCOUNTING
+                    }
+                },
+            )
             section == AppSection.SCHEDULES -> ScheduleListScreen(
                 contentPadding = padding,
                 state = state,
@@ -151,6 +172,19 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                 onEditResult = { editingRecognizedIndex = it },
                 onRemoveResult = viewModel::removeRecognized,
                 onSaveAll = { viewModel.saveRecognized { section = AppSection.SCHEDULES } },
+            )
+            section == AppSection.ACCOUNTING -> AccountingScreen(
+                contentPadding = padding,
+                entries = state.accountEntries,
+                onAdd = {
+                    editingAccountEntry = AccountEntry(
+                        type = AccountEntryType.EXPENSE,
+                        amountCents = 0,
+                        category = "餐饮",
+                    )
+                },
+                onEdit = { editingAccountEntry = it },
+                onDelete = viewModel::deleteAccountEntry,
             )
             section == AppSection.HISTORY -> ReminderHistoryScreen(
                 contentPadding = padding,

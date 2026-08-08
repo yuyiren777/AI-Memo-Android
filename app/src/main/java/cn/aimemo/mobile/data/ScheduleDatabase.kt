@@ -32,6 +32,7 @@ class ScheduleDatabase(context: Context) :
             "CREATE INDEX idx_schedules_date ON schedules(completed, schedule_date, start_time)"
         )
         createReminderLogTable(database)
+        createAccountEntriesTable(database)
     }
 
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -39,6 +40,9 @@ class ScheduleDatabase(context: Context) :
             database.execSQL("ALTER TABLE schedules ADD COLUMN end_time TEXT")
             database.execSQL("ALTER TABLE schedules ADD COLUMN repeat_rule TEXT NOT NULL DEFAULT 'none'")
             createReminderLogTable(database)
+        }
+        if (oldVersion < 3) {
+            createAccountEntriesTable(database)
         }
     }
 
@@ -166,6 +170,54 @@ class ScheduleDatabase(context: Context) :
         writableDatabase.delete("reminder_logs", "id = ?", arrayOf(id.toString()))
     }
 
+    fun listAccountEntries(): List<AccountEntry> {
+        val result = mutableListOf<AccountEntry>()
+        readableDatabase.query(
+            "account_entries",
+            null,
+            null,
+            null,
+            null,
+            null,
+            "occurred_at DESC, id DESC",
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += AccountEntry(
+                    id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                    type = AccountEntryType.fromValue(cursor.getInt(cursor.getColumnIndexOrThrow("entry_type"))),
+                    amountCents = cursor.getLong(cursor.getColumnIndexOrThrow("amount_cents")),
+                    category = cursor.getString(cursor.getColumnIndexOrThrow("category")),
+                    note = cursor.getString(cursor.getColumnIndexOrThrow("note")),
+                    occurredAt = cursor.getLong(cursor.getColumnIndexOrThrow("occurred_at")),
+                    createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+                )
+            }
+        }
+        return result
+    }
+
+    fun saveAccountEntry(entry: AccountEntry): AccountEntry {
+        val values = ContentValues().apply {
+            put("entry_type", entry.type.value)
+            put("amount_cents", entry.amountCents)
+            put("category", entry.category.trim())
+            put("note", entry.note.trim())
+            put("occurred_at", entry.occurredAt)
+            put("created_at", entry.createdAt)
+        }
+        val id = if (entry.id == 0L) {
+            writableDatabase.insertOrThrow("account_entries", null, values)
+        } else {
+            writableDatabase.update("account_entries", values, "id = ?", arrayOf(entry.id.toString()))
+            entry.id
+        }
+        return entry.copy(id = id)
+    }
+
+    fun deleteAccountEntry(id: Long) {
+        writableDatabase.delete("account_entries", "id = ?", arrayOf(id.toString()))
+    }
+
     private fun createReminderLogTable(database: SQLiteDatabase) {
         database.execSQL(
             """
@@ -181,6 +233,25 @@ class ScheduleDatabase(context: Context) :
         )
     }
 
+    private fun createAccountEntriesTable(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS account_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_type INTEGER NOT NULL,
+                amount_cents INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                occurred_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_account_entries_occurred_at ON account_entries(occurred_at DESC)"
+        )
+    }
+
     private fun android.database.Cursor.getStringOrNull(index: Int): String? =
         if (isNull(index)) null else getString(index)
 
@@ -190,6 +261,6 @@ class ScheduleDatabase(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "ai_memo_mobile.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
     }
 }
