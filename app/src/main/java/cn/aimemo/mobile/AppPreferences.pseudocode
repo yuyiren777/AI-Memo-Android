@@ -1,0 +1,32 @@
+COMPONENT AppPreferences
+
+PURPOSE
+    Store ordinary preferences and protected user settings.
+
+PUBLIC VALUES
+    reminder timing
+    selected theme
+    selected AI models
+    custom accounting categories
+    monthly and yearly budgets
+    screen capture preference
+
+PROTECTED VALUES
+    AI service credential
+    private accounting settings
+    screen capture password verifier
+
+READ_PROTECTED_VALUE(name)
+    return PRIVATE_SECURITY_IMPLEMENTATION.read(name)
+
+WRITE_PROTECTED_VALUE(name, value)
+    PRIVATE_SECURITY_IMPLEMENTATION.write(name, value)
+
+DISABLE_SCREEN_CAPTURE_PROTECTION(password, optional_confirmation)
+    validate user input
+    create or verify the protected credential
+    update the preference after successful verification
+    erase temporary password buffers
+
+NOTE
+    PRIVATE_SECURITY_IMPLEMENTATION is intentionally omitted from the public repository.

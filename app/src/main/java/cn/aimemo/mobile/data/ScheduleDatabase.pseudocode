@@ -1,0 +1,31 @@
+COMPONENT ScheduleDatabase
+
+OPEN_DATABASE()
+    initialize PRIVATE_STORAGE_IMPLEMENTATION
+    prepare application tables and indexes
+
+SAVE_SCHEDULE(schedule)
+    validate schedule
+    protected_record = PRIVATE_SECURITY_IMPLEMENTATION.protect(schedule)
+    PRIVATE_STORAGE_IMPLEMENTATION.save_schedule(protected_record)
+
+LOAD_SCHEDULES()
+    protected_records = PRIVATE_STORAGE_IMPLEMENTATION.load_schedules()
+    return protected_records.map(PRIVATE_SECURITY_IMPLEMENTATION.recover)
+
+SAVE_REMINDER_LOG(reminder)
+    validate reminder
+    protected_record = PRIVATE_SECURITY_IMPLEMENTATION.protect(reminder)
+    PRIVATE_STORAGE_IMPLEMENTATION.save_reminder(protected_record)
+
+SAVE_ACCOUNT_ENTRY(entry)
+    validate entry
+    protected_record = PRIVATE_SECURITY_IMPLEMENTATION.protect(entry)
+    PRIVATE_STORAGE_IMPLEMENTATION.save_account_entry(protected_record)
+
+LOAD_ACCOUNT_ENTRIES()
+    protected_records = PRIVATE_STORAGE_IMPLEMENTATION.load_account_entries()
+    return protected_records.map(PRIVATE_SECURITY_IMPLEMENTATION.recover)
+
+NOTE
+    Database protection, migration, validation and recovery details are intentionally omitted.

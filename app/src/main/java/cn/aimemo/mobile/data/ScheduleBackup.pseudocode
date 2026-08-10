@@ -1,0 +1,12 @@
+COMPONENT BackupPayloadSerializer
+
+SERIALIZE(schedules, accounts, budgets)
+    validate item counts and required fields
+    return PRIVATE_SERIALIZATION_IMPLEMENTATION.encode(schedules, accounts, budgets)
+
+DESERIALIZE(payload)
+    validate payload type, version, limits and required fields
+    return PRIVATE_SERIALIZATION_IMPLEMENTATION.decode(payload)
+
+NOTE
+    The official payload structure, validation rules and migrations are intentionally omitted.
