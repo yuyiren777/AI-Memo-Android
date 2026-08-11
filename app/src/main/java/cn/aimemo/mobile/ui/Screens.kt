@@ -6,11 +6,7 @@ import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageDecoder
 import android.net.Uri
-import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -104,7 +100,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
-import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -773,14 +768,18 @@ fun SmartAddScreen(
     var input by remember { mutableStateOf("") }
     var imageName by remember { mutableStateOf("") }
     val processUris: (List<Uri>) -> Unit = { uris ->
-        val selected = uris.take(MAX_SELECTED_IMAGES)
+        val selected = uris.take(MAX_AI_IMAGE_COUNT)
         imageName = "正在读取 1/${selected.size} 张图片…"
         scope.launch {
             val images = mutableListOf<Pair<ByteArray, String>>()
             val failures = mutableListOf<String>()
             selected.forEachIndexed { index, uri ->
                 imageName = "正在读取第 ${index + 1}/${selected.size} 张图片…"
-                runCatching { withContext(Dispatchers.IO) { prepareImage(context, uri) } }
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        prepareAiImage(context, uri, SCHEDULE_IMAGE_PROFILE)
+                    }
+                }
                     .onSuccess { images.add(it) }
                     .onFailure { failures += it.message ?: "无法读取第 ${index + 1} 张图片" }
             }
@@ -798,7 +797,7 @@ fun SmartAddScreen(
         }
     }
     val picker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(MAX_SELECTED_IMAGES)
+        ActivityResultContracts.PickMultipleVisualMedia(MAX_AI_IMAGE_COUNT)
     ) { uris -> if (uris.isNotEmpty()) processUris(uris) }
 
     LazyColumn(
@@ -1303,83 +1302,8 @@ private fun clipboardImageUri(context: Context): Uri? {
     return clip.getItemAt(0).uri
 }
 
-private fun prepareImage(context: Context, uri: Uri): Pair<ByteArray, String> {
-    val temporary = File.createTempFile("ai_memo_image_", ".source", context.cacheDir)
-    try {
-        try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                temporary.outputStream().buffered().use { output -> input.copyTo(output) }
-            } ?: error("相册没有返回可读取的图片，请重新选择")
-        } catch (_: SecurityException) {
-            error("图片读取权限已失效，请重新选择图片")
-        }
-        require(temporary.length() > 0L) { "这张图片没有有效内容，请重新选择" }
-        require(temporary.length() <= MAX_IMAGE_SOURCE_BYTES) { "图片文件过大，请选择小于 30 MB 的图片" }
-
-        val original = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            decodeModernImage(temporary)
-        } else {
-            decodeLegacyImage(temporary)
-        }
-        val scale = minOf(1f, MAX_IMAGE_EDGE.toFloat() / maxOf(original.width, original.height))
-        val bitmap = if (scale < 1f) {
-            Bitmap.createScaledBitmap(
-                original,
-                (original.width * scale).toInt().coerceAtLeast(1),
-                (original.height * scale).toInt().coerceAtLeast(1),
-                true,
-            )
-        } else original
-        return ByteArrayOutputStream().use { output ->
-            check(bitmap.compress(Bitmap.CompressFormat.JPEG, 88, output)) { "图片转换失败，请换一张图片重试" }
-            output.toByteArray() to "image/jpeg"
-        }.also {
-            if (bitmap !== original) bitmap.recycle()
-            original.recycle()
-        }
-    } finally {
-        temporary.delete()
-    }
-}
-
-@androidx.annotation.RequiresApi(Build.VERSION_CODES.P)
-private fun decodeModernImage(file: File): Bitmap = try {
-    ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, info, _ ->
-        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-        val longest = maxOf(info.size.width, info.size.height)
-        if (longest > MAX_IMAGE_EDGE) {
-            val scale = MAX_IMAGE_EDGE.toFloat() / longest
-            decoder.setTargetSize(
-                (info.size.width * scale).toInt().coerceAtLeast(1),
-                (info.size.height * scale).toInt().coerceAtLeast(1),
-            )
-        }
-    }
-} catch (_: Exception) {
-    error("暂时无法解析这种图片格式，请换用 JPG、PNG、WebP 或系统截图")
-}
-
-private fun decodeLegacyImage(file: File): Bitmap {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeFile(file.absolutePath, bounds)
-    require(bounds.outWidth > 0 && bounds.outHeight > 0) {
-        "暂时无法解析这种图片格式，请换用 JPG、PNG、WebP 或系统截图"
-    }
-    var sampleSize = 1
-    while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > MAX_IMAGE_EDGE * 2) sampleSize *= 2
-    val options = BitmapFactory.Options().apply {
-        inSampleSize = sampleSize
-        inPreferredConfig = Bitmap.Config.ARGB_8888
-    }
-    return BitmapFactory.decodeFile(file.absolutePath, options)
-        ?: error("暂时无法解析这种图片格式，请换用 JPG、PNG、WebP 或系统截图")
-}
-
 private val SCHEDULE_DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy年M月d日 EEEE")
 private val DATE_PICKER_FORMATTER = DateTimeFormatter.ofPattern("yyyy年M月d日")
 private val TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm")
 private val EXPORT_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-private const val MAX_IMAGE_EDGE = 2048
-private const val MAX_IMAGE_SOURCE_BYTES = 30L * 1024L * 1024L
-private const val MAX_SELECTED_IMAGES = 4
 private const val MAX_BACKUP_BYTES = 20 * 1024 * 1024

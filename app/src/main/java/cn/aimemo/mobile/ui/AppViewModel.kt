@@ -402,17 +402,97 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val normalized = description.trim()
         if (normalized.isBlank()) return showError(IllegalArgumentException("请先输入一段收入或支出描述"))
+        classifyAccounts(
+            initialStatus = "正在判断收入/支出并匹配分类…",
+            expenseCategories = expenseCategories,
+            incomeCategories = incomeCategories,
+            occurredAt = occurredAt,
+            onAutoSaved = onAutoSaved,
+            onNeedsReview = onNeedsReview,
+        ) {
+            AccountExtractor.parse(
+                aiClient.classifyAccount(normalized, expenseCategories, incomeCategories)
+            )
+        }
+    }
+
+    fun classifyAccountImages(
+        images: List<Pair<ByteArray, String>>,
+        expenseCategories: List<String>,
+        incomeCategories: List<String>,
+        occurredAt: Long,
+        onAutoSaved: () -> Unit,
+        onNeedsReview: (List<AccountClassificationResult>) -> Unit,
+    ) {
+        if (images.isEmpty()) return showError(IllegalArgumentException("请先选择购物清单或票据图片"))
+        if (images.size > MAX_ACCOUNT_IMAGES) {
+            return showError(IllegalArgumentException("一次最多识别 $MAX_ACCOUNT_IMAGES 张图片"))
+        }
+        classifyAccounts(
+            initialStatus = "准备识别 ${images.size} 张记账图片…",
+            expenseCategories = expenseCategories,
+            incomeCategories = incomeCategories,
+            occurredAt = occurredAt,
+            onAutoSaved = onAutoSaved,
+            onNeedsReview = onNeedsReview,
+        ) {
+            val merged = mutableListOf<AccountClassificationResult>()
+            images.forEachIndexed { index, (bytes, mimeType) ->
+                _uiState.value = _uiState.value.copy(
+                    accountClassificationStatus =
+                        "正在识别第 ${index + 1}/${images.size} 张图片中的商品与金额…",
+                )
+                var parsed = AccountExtractor.parse(
+                    aiClient.classifyAccountImage(
+                        bytes,
+                        mimeType,
+                        expenseCategories,
+                        incomeCategories,
+                    )
+                )
+                if (!parsed.hasUsefulAccountContent()) {
+                    _uiState.value = _uiState.value.copy(
+                        accountClassificationStatus =
+                            "第 ${index + 1}/${images.size} 张首次未提取到账目，正在放大复查…",
+                    )
+                    parsed = AccountExtractor.parse(
+                        aiClient.classifyAccountImage(
+                            bytes,
+                            mimeType,
+                            expenseCategories,
+                            incomeCategories,
+                            recoveryAttempt = true,
+                        )
+                    )
+                }
+                if (!parsed.hasUsefulAccountContent()) {
+                    throw IllegalStateException("第 ${index + 1} 张图片没有识别出有效账目，整批尚未写入")
+                }
+                merged += parsed
+            }
+            merged
+        }
+    }
+
+    private fun classifyAccounts(
+        initialStatus: String,
+        expenseCategories: List<String>,
+        incomeCategories: List<String>,
+        occurredAt: Long,
+        onAutoSaved: () -> Unit,
+        onNeedsReview: (List<AccountClassificationResult>) -> Unit,
+        recognize: suspend () -> List<AccountClassificationResult>,
+    ) {
         if (_uiState.value.classifyingAccount) return
         _uiState.value = _uiState.value.copy(
             classifyingAccount = true,
-            accountClassificationStatus = "正在判断收入/支出并匹配分类…",
+            accountClassificationStatus = initialStatus,
             error = null,
+            suggestModelSwitch = false,
         )
         launchSensitive {
             runCatching {
-                val results = AccountExtractor.parse(
-                    aiClient.classifyAccount(normalized, expenseCategories, incomeCategories)
-                ).map { result ->
+                val results = recognize().map { result ->
                     normalizeAccountClassification(result, expenseCategories, incomeCategories)
                 }
                 if (results.isEmpty()) throw IllegalStateException("模型没有识别出任何账目")
@@ -708,6 +788,14 @@ private fun normalizeAccountClassification(
 private fun AccountClassificationResult.isComplete(): Boolean =
     type != null && amountCents != null && amountCents > 0 && category != null && !note.isNullOrBlank()
 
+private fun List<AccountClassificationResult>.hasUsefulAccountContent(): Boolean = any { result ->
+    result.type != null ||
+        result.amountCents != null ||
+        !result.category.isNullOrBlank() ||
+        !result.suggestedCategory.isNullOrBlank() ||
+        !result.note.isNullOrBlank()
+}
+
 private fun financialAdvicePrompt(periodLabel: String, summary: AccountingSummary): String {
     fun categories(items: List<cn.aimemo.mobile.data.AccountCategoryTotal>): String =
         items.joinToString("；") { "${it.category} ${formatMoney(it.amountCents)}" }.ifBlank { "无" }
@@ -736,6 +824,8 @@ private fun isEmptyModelResult(response: String): Boolean {
         .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
     return normalized.isBlank() || normalized == "[]" || normalized == "{}"
 }
+
+private const val MAX_ACCOUNT_IMAGES = 4
 
 private fun scheduleImportKey(schedule: Schedule) = listOf(
     schedule.title.trim(), schedule.notes.trim(), schedule.location.trim(), schedule.date,

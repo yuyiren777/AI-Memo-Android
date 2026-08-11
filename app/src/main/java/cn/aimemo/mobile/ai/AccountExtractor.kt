@@ -32,6 +32,38 @@ object AccountExtractor {
         用户描述：$description
     """.trimIndent()
 
+    fun imagePrompt(
+        expenseCategories: List<String>,
+        incomeCategories: List<String>,
+        recoveryAttempt: Boolean,
+    ): String {
+        val readingInstruction = if (recoveryAttempt) {
+            "上一次没有提取到有效账目。请重新放大并逐行复查图片，特别检查小字、数量、单价、行金额、折扣和最终实付金额。"
+        } else {
+            "请先在内部完成整张图片的 OCR，按从上到下、从左到右逐区域阅读，不得只看醒目的合计金额。"
+        }
+        return """
+            你是一个严谨的中文票据与购物清单记账助手。$readingInstruction
+
+            先判断图片中共有几条独立账目，再逐条判断 type、amount_yuan、category 和 note：
+            1. 超市小票、打印购物清单或订单明细中，每个有独立成交金额的商品或服务通常是一条支出；note 写商品名称，数量或规格清晰时一并写入。
+            2. 行金额优先采用该行最终成交金额；不要把数量、单价、会员积分、商品编码误认为金额。
+            3. 合计、小计、应付、实付、找零、支付方式、订单号和流水号不是额外账目，绝不能在商品明细之外重复记账。
+            4. 如果各商品金额清晰，逐项输出且不要再输出合计；如果只有最终实付清晰，或存在无法合理分摊的整单优惠，则只输出一条整单账目，金额采用最终实付，note 概括可辨认的主要商品。
+            5. 单独列出的优惠、满减、券和找零不是收入。只有图片明确表示真实资金入账时才判断为收入。
+            6. 纯购物计划没有价格时仍按可辨认商品分别输出，但 amount_yuan 必须为 null，留给用户补充。
+            7. category 必须从对应收支分类列表中原样选择；没有合适分类时为 null，并填写 suggested_category。
+            8. 任意字段看不清或无法可靠判断时必须为 null，禁止猜测。最多输出 100 条。
+
+            只返回 JSON，不要 Markdown、解释、OCR 原文或额外文字：
+            {"count":2,"entries":[{"type":"expense 或 income 或 null","amount_yuan":数字或null,"category":"列表中的原文分类或null","suggested_category":"建议分类或null","note":"该条具体事项或null"}]}
+            count 必须等于 entries 的实际条数。
+
+            支出分类列表：${expenseCategories.joinToString("、")}
+            收入分类列表：${incomeCategories.joinToString("、")}
+        """.trimIndent()
+    }
+
     fun parse(response: String): List<AccountClassificationResult> {
         val cleaned = response.trim()
             .removePrefix("```json")

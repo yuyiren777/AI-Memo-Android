@@ -4,7 +4,7 @@
 
 ## 下载最新版
 
-**[直接下载 AI-Memo-Android v0.8.3 APK](https://github.com/yuyiren777/AI-Memo-Android/releases/download/v0.8.3/AI-Memo-Android-v0.8.3.apk)**
+**[直接下载 AI-Memo-Android v0.9.0 APK](https://github.com/yuyiren777/AI-Memo-Android/releases/download/v0.9.0/AI-Memo-Android-v0.9.0.apk)**
 
 也可以进入 [Releases 页面](https://github.com/yuyiren777/AI-Memo-Android/releases/latest) 查看最新版本和安装包。
 
@@ -20,6 +20,8 @@
 - 收入、支出流水，支持具体日期、时间、分类和备注
 - 完整分类图标网格、自定义分类和分类删除
 - AI 一次识别多条账目，并分别判断收支、金额、分类和备注
+- 记账图片识别入口，支持最多 4 张超市小票或购物清单，自动逐张识别并合并账目
+- 小票识别会复核小字、数量、单价和行合计，避免把小计、总计或找零重复记账
 - 月总结、年总结、按周期独立预算和预算进度
 - 月度与年度收支折线图、收入与支出分类饼图
 - 用户主动触发的流式 AI 消费分析
@@ -60,4 +62,4 @@ app/src/main/java/cn/aimemo/mobile/
 └── ui/          Compose 页面和主题
 ```
 
-当前公开版本：`v0.8.3`
+当前公开版本：`v0.9.0`

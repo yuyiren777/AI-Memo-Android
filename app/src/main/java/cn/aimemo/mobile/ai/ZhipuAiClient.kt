@@ -30,6 +30,21 @@ class ZhipuAiClient(private val preferences: AppPreferences) {
         content = AccountExtractor.prompt(description, expenseCategories, incomeCategories),
         image = null,
         extractionPrompt = false,
+        maxTokens = 4096,
+    )
+
+    suspend fun classifyAccountImage(
+        imageBytes: ByteArray,
+        mimeType: String,
+        expenseCategories: List<String>,
+        incomeCategories: List<String>,
+        recoveryAttempt: Boolean = false,
+    ): String = request(
+        model = selectedModel(isImage = true),
+        content = AccountExtractor.imagePrompt(expenseCategories, incomeCategories, recoveryAttempt),
+        image = encodedImage(imageBytes, mimeType),
+        extractionPrompt = false,
+        maxTokens = 8192,
     )
 
     suspend fun streamFinancialAdvice(prompt: String, onDelta: (String) -> Unit) = runInterruptible(Dispatchers.IO) {
@@ -49,7 +64,7 @@ class ZhipuAiClient(private val preferences: AppPreferences) {
     ): String = request(
         model = selectedModel(isImage = true),
         content = if (recoveryAttempt) IMAGE_RECOVERY_PROMPT else IMAGE_PROMPT,
-        image = "data:$mimeType;base64,${Base64.encodeToString(imageBytes, Base64.NO_WRAP)}",
+        image = encodedImage(imageBytes, mimeType),
     )
 
     suspend fun testConnection(): String {
@@ -70,6 +85,7 @@ class ZhipuAiClient(private val preferences: AppPreferences) {
         content: String,
         image: String?,
         extractionPrompt: Boolean = true,
+        maxTokens: Int = 2048,
     ): String {
         val apiKey = preferences.apiKey
         require(apiKey.isNotBlank()) { "请先在设置中填写智谱 API Key" }
@@ -77,7 +93,7 @@ class ZhipuAiClient(private val preferences: AppPreferences) {
         repeat(MAX_ATTEMPTS) { attempt ->
             try {
                 return runInterruptible(Dispatchers.IO) {
-                    execute(model, content, image, extractionPrompt, apiKey)
+                    execute(model, content, image, extractionPrompt, apiKey, maxTokens)
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -102,6 +118,7 @@ class ZhipuAiClient(private val preferences: AppPreferences) {
         image: String?,
         extractionPrompt: Boolean,
         apiKey: String,
+        maxTokens: Int,
     ): String {
         val userContent: Any = if (image == null) text else JSONArray()
             .put(JSONObject().put("type", "text").put("text", text))
@@ -113,7 +130,7 @@ class ZhipuAiClient(private val preferences: AppPreferences) {
             .put("model", model)
             .put("messages", messages)
             .put("temperature", 0.1)
-            .put("max_tokens", 2048)
+            .put("max_tokens", maxTokens)
 
         val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
         try {
@@ -203,6 +220,9 @@ class ZhipuAiClient(private val preferences: AppPreferences) {
             connection.disconnect()
         }
     }
+
+    private fun encodedImage(imageBytes: ByteArray, mimeType: String): String =
+        "data:$mimeType;base64,${Base64.encodeToString(imageBytes, Base64.NO_WRAP)}"
 
     companion object {
         const val DEFAULT_TEXT_MODEL = "glm-4.7-flash"

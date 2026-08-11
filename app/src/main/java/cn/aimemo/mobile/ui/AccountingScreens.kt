@@ -3,6 +3,10 @@ package cn.aimemo.mobile.ui
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.graphics.Paint
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -54,6 +58,7 @@ import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Flight
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.HomeWork
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.LocalHospital
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Payments
@@ -94,6 +99,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -137,6 +143,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.roundToLong
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val ExpenseColor = Color(0xFFC74646)
 private val IncomeColor = Color(0xFF218653)
@@ -909,6 +918,7 @@ fun AccountEntryEditorScreen(
     customExpenseCategories: Set<String>,
     customIncomeCategories: Set<String>,
     classifyingAccount: Boolean,
+    accountClassificationStatus: String,
     savingAccountEntries: Boolean,
     onCancel: () -> Unit,
     onAddCustomCategory: (AccountEntryType, String) -> Unit,
@@ -921,10 +931,19 @@ fun AccountEntryEditorScreen(
         () -> Unit,
         (List<AccountClassificationResult>) -> Unit,
     ) -> Unit,
+    onClassifyAccountImages: (
+        List<Pair<ByteArray, String>>,
+        List<String>,
+        List<String>,
+        Long,
+        () -> Unit,
+        (List<AccountClassificationResult>) -> Unit,
+    ) -> Unit,
     onSaveEntries: (List<AccountEntry>, () -> Unit) -> Unit,
     onFinished: () -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val initialDateTime = remember(initial) {
         Instant.ofEpochMilli(initial.occurredAt).atZone(ZoneId.systemDefault()).toLocalDateTime()
     }
@@ -937,6 +956,9 @@ fun AccountEntryEditorScreen(
     var showCustomCategoryDialog by remember { mutableStateOf(false) }
     var customCategoryName by remember { mutableStateOf("") }
     var accountDescription by remember(initial) { mutableStateOf("") }
+    var recognitionMode by remember(initial) { mutableStateOf("text") }
+    var accountImageStatus by remember(initial) { mutableStateOf("") }
+    var preparingAccountImages by remember { mutableStateOf(false) }
     var pendingDeleteCustomCategory by remember { mutableStateOf<String?>(null) }
     var reviewItems by remember(initial) { mutableStateOf<List<AccountClassificationResult>>(emptyList()) }
     var reviewedEntries by remember(initial) { mutableStateOf<List<AccountEntry>>(emptyList()) }
@@ -987,6 +1009,60 @@ fun AccountEntryEditorScreen(
         category = result.category.orEmpty()
         note = result.note.orEmpty()
     }
+
+    fun beginReview(items: List<AccountClassificationResult>) {
+        if (items.isEmpty()) return
+        reviewItems = items
+        reviewedEntries = emptyList()
+        reviewIndex = 0
+        loadReviewItem(items.first())
+        accountDescription = ""
+        accountImageStatus = ""
+        showReviewHint = true
+    }
+
+    val processAccountImageUris: (List<Uri>) -> Unit = { uris ->
+        val selected = uris.take(MAX_AI_IMAGE_COUNT)
+        if (selected.isEmpty()) {
+            accountImageStatus = "尚未选择图片"
+        } else {
+            preparingAccountImages = true
+            accountImageStatus = "正在读取 1/${selected.size} 张图片…"
+            scope.launch {
+                val images = mutableListOf<Pair<ByteArray, String>>()
+                val failures = mutableListOf<String>()
+                selected.forEachIndexed { index, uri ->
+                    accountImageStatus = "正在读取第 ${index + 1}/${selected.size} 张图片…"
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            prepareAiImage(context, uri, ACCOUNT_DOCUMENT_IMAGE_PROFILE)
+                        }
+                    }.onSuccess { images.add(it) }.onFailure { error ->
+                        failures += error.message ?: "第 ${index + 1} 张图片无法读取"
+                    }
+                }
+                preparingAccountImages = false
+                if (failures.isNotEmpty()) {
+                    accountImageStatus =
+                        "有 ${failures.size} 张图片无法读取，尚未开始识别，请重新选择"
+                } else {
+                    accountImageStatus = "已读取 ${images.size} 张图片，正在提交识别…"
+                    val occurredAt = date.atTime(time).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    onClassifyAccountImages(
+                        images,
+                        expenseCategoryNames,
+                        incomeCategoryNames,
+                        occurredAt,
+                        onFinished,
+                        ::beginReview,
+                    )
+                }
+            }
+        }
+    }
+    val accountImagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(MAX_AI_IMAGE_COUNT)
+    ) { uris -> processAccountImageUris(uris) }
 
     pendingDeleteCustomCategory?.let { categoryName ->
         AlertDialog(
@@ -1122,45 +1198,103 @@ fun AccountEntryEditorScreen(
             } else null,
         )
         if (initial.id == 0L && !isReviewing) {
-            Text("一句话记账", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(
-                value = accountDescription,
-                onValueChange = { accountDescription = it.take(1000) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("描述一条或多条收入、支出") },
-                placeholder = { Text("例如：买菜 32 元，打车 18 元，工资入账 2 万") },
-                minLines = 3,
-                maxLines = 6,
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                OutlinedButton(
-                    onClick = {
-                        val occurredAt = date.atTime(time).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        onClassifyAccount(
-                            accountDescription,
-                            expenseCategoryNames,
-                            incomeCategoryNames,
-                            occurredAt,
-                            onFinished,
-                        ) { items ->
-                            reviewItems = items
-                            reviewedEntries = emptyList()
-                            reviewIndex = 0
-                            loadReviewItem(items.first())
-                            accountDescription = ""
-                            showReviewHint = true
+            Text("智能记账", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = recognitionMode == "text",
+                    onClick = { recognitionMode = "text" },
+                    label = { Text("一句话识别") },
+                    enabled = !classifyingAccount && !preparingAccountImages,
+                    modifier = Modifier.weight(1f),
+                )
+                FilterChip(
+                    selected = recognitionMode == "image",
+                    onClick = { recognitionMode = "image" },
+                    label = { Text("图片识别") },
+                    enabled = !classifyingAccount && !preparingAccountImages,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (recognitionMode == "text") {
+                OutlinedTextField(
+                    value = accountDescription,
+                    onValueChange = { accountDescription = it.take(1000) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("描述一条或多条收入、支出") },
+                    placeholder = { Text("例如：买菜 32 元，打车 18 元，工资入账 2 万") },
+                    minLines = 3,
+                    maxLines = 6,
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    OutlinedButton(
+                        onClick = {
+                            val occurredAt = date.atTime(time).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                            onClassifyAccount(
+                                accountDescription,
+                                expenseCategoryNames,
+                                incomeCategoryNames,
+                                occurredAt,
+                                onFinished,
+                                ::beginReview,
+                            )
+                        },
+                        enabled = accountDescription.isNotBlank() && !classifyingAccount,
+                    ) {
+                        if (classifyingAccount) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Outlined.AutoAwesome, null)
                         }
-                    },
-                    enabled = accountDescription.isNotBlank() && !classifyingAccount,
-                ) {
-                    if (classifyingAccount) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Outlined.AutoAwesome, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (classifyingAccount) "识别中…" else "识别并分类")
                     }
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (classifyingAccount) "识别中…" else "智能分类")
                 }
+            } else {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Column(
+                        Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(
+                            Icons.Outlined.Image,
+                            contentDescription = null,
+                            modifier = Modifier.size(38.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            accountImageStatus.ifBlank { "尚未选择购物清单或票据图片" },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Button(
+                            onClick = {
+                                accountImagePicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            enabled = !preparingAccountImages && !classifyingAccount,
+                        ) {
+                            if (preparingAccountImages) {
+                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Outlined.Image, null)
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (preparingAccountImages) "读取中…" else "选择图片（最多4张）")
+                        }
+                    }
+                }
+            }
+            if (classifyingAccount) {
+                Text(
+                    accountClassificationStatus.ifBlank { "正在识别并匹配分类…" },
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
         }
         Text("分类", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)

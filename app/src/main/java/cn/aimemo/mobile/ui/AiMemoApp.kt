@@ -54,6 +54,15 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
         showReminderLogs = true
         viewModel.markReminderLogsSeen()
     }
+    val openAiSettings: () -> Unit = {
+        viewModel.consumeNotice()
+        editingSchedule = null
+        editingAccountEntry = null
+        editingRecognizedIndex = -1
+        showingSmartAdd = false
+        showReminderLogs = false
+        section = AppSection.SETTINGS
+    }
     val reminderListVisible = section == AppSection.SCHEDULES &&
         showReminderLogs && !showingSmartAdd && editingSchedule == null && editingRecognizedIndex < 0
     LaunchedEffect(reminderListVisible, state.unreadReminderCount) {
@@ -73,13 +82,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
             },
             confirmButton = {
                 TextButton(
-                    onClick = {
-                        viewModel.consumeNotice()
-                        editingSchedule = null
-                        showingSmartAdd = false
-                        editingRecognizedIndex = -1
-                        section = AppSection.SETTINGS
-                    },
+                    onClick = openAiSettings,
                 ) { Text("去填写 API Key") }
             },
             dismissButton = {
@@ -93,13 +96,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
             text = { Text("当前模型暂时没有响应。是否前往模型配置页切换模型？也可以稍后再试。") },
             confirmButton = {
                 TextButton(
-                    onClick = {
-                        viewModel.consumeNotice()
-                        editingSchedule = null
-                        showingSmartAdd = false
-                        editingRecognizedIndex = -1
-                        section = AppSection.SETTINGS
-                    },
+                    onClick = openAiSettings,
                 ) { Text("去切换模型") }
             },
             dismissButton = {
@@ -193,11 +190,13 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                 customExpenseCategories = state.customExpenseCategories,
                 customIncomeCategories = state.customIncomeCategories,
                 classifyingAccount = state.classifyingAccount,
+                accountClassificationStatus = state.accountClassificationStatus,
                 savingAccountEntries = state.savingAccountEntries,
                 onCancel = { editingAccountEntry = null },
                 onAddCustomCategory = viewModel::addCustomAccountCategory,
                 onDeleteCustomCategory = viewModel::deleteCustomAccountCategory,
                 onClassifyAccount = viewModel::classifyAccountText,
+                onClassifyAccountImages = viewModel::classifyAccountImages,
                 onSaveEntries = viewModel::saveAccountEntries,
                 onFinished = {
                     editingAccountEntry = null
