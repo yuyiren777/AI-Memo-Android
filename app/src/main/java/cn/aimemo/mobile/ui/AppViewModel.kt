@@ -423,10 +423,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         occurredAt: Long,
         onAutoSaved: () -> Unit,
         onNeedsReview: (List<AccountClassificationResult>) -> Unit,
+        onFailed: (String) -> Unit,
     ) {
-        if (images.isEmpty()) return showError(IllegalArgumentException("请先选择购物清单或票据图片"))
+        if (images.isEmpty()) {
+            val error = IllegalArgumentException("请先选择购物清单或票据图片")
+            onFailed(error.message.orEmpty())
+            return showError(error)
+        }
         if (images.size > MAX_ACCOUNT_IMAGES) {
-            return showError(IllegalArgumentException("一次最多识别 $MAX_ACCOUNT_IMAGES 张图片"))
+            val error = IllegalArgumentException("一次最多识别 $MAX_ACCOUNT_IMAGES 张图片")
+            onFailed(error.message.orEmpty())
+            return showError(error)
         }
         classifyAccounts(
             initialStatus = "准备识别 ${images.size} 张记账图片…",
@@ -435,6 +442,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             occurredAt = occurredAt,
             onAutoSaved = onAutoSaved,
             onNeedsReview = onNeedsReview,
+            onFailed = onFailed,
         ) {
             val merged = mutableListOf<AccountClassificationResult>()
             images.forEachIndexed { index, (bytes, mimeType) ->
@@ -481,6 +489,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         occurredAt: Long,
         onAutoSaved: () -> Unit,
         onNeedsReview: (List<AccountClassificationResult>) -> Unit,
+        onFailed: (String) -> Unit = {},
         recognize: suspend () -> List<AccountClassificationResult>,
     ) {
         if (_uiState.value.classifyingAccount) return
@@ -533,10 +542,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.onFailure {
                 if (it is CancellationException) return@onFailure
+                val message = it.message?.takeIf(String::isNotBlank) ?: "识别失败，请重试"
                 _uiState.value = _uiState.value.copy(
                     classifyingAccount = false,
-                    accountClassificationStatus = "",
+                    accountClassificationStatus = "识别失败：$message",
                 )
+                onFailed(message)
                 showError(it)
             }
         }
@@ -580,6 +591,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteAccountEntry(entry: AccountEntry) {
         viewModelScope.launch {
             runCatching { accountingRepository.delete(entry) }
+                .onFailure(::showError)
+        }
+    }
+
+    fun deleteAccountEntries(entries: Collection<AccountEntry>) {
+        if (entries.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { accountingRepository.deleteAll(entries) }
                 .onFailure(::showError)
         }
     }

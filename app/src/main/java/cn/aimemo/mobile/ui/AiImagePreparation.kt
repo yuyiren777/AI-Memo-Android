@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
+import androidx.core.content.FileProvider
 import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlin.math.sqrt
@@ -123,3 +124,9 @@ private fun targetDimensions(
 }
 
 private const val MAX_IMAGE_SOURCE_BYTES = 30L * 1024L * 1024L
+
+internal fun createCameraImageUri(context: Context): Uri {
+    val cameraDirectory = File(context.cacheDir, "camera").apply { mkdirs() }
+    val image = File.createTempFile("ai_memo_camera_", ".jpg", cameraDirectory)
+    return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", image)
+}

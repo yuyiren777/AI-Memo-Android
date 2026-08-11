@@ -27,5 +27,8 @@ LOAD_ACCOUNT_ENTRIES()
     protected_records = PRIVATE_STORAGE_IMPLEMENTATION.load_account_entries()
     return protected_records.map(PRIVATE_SECURITY_IMPLEMENTATION.recover)
 
+DELETE_ACCOUNT_ENTRIES(entry_ids)
+    PRIVATE_STORAGE_IMPLEMENTATION.delete_account_entries_atomically(entry_ids)
+
 NOTE
     Database protection, migration, validation and recovery details are intentionally omitted.

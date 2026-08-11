@@ -38,6 +38,11 @@ class AccountingRepository(private val database: ScheduleDatabase) {
         _entries.value = database.listAccountEntries()
     }
 
+    suspend fun deleteAll(entries: Collection<AccountEntry>) = withContext(Dispatchers.IO) {
+        database.deleteAccountEntries(entries.map(AccountEntry::id))
+        _entries.value = database.listAccountEntries()
+    }
+
     fun clearMemory() {
         _entries.value = emptyList()
     }

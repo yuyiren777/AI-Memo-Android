@@ -46,6 +46,7 @@ import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -767,6 +768,7 @@ fun SmartAddScreen(
     var mode by remember(initialMode) { mutableStateOf(initialMode) }
     var input by remember { mutableStateOf("") }
     var imageName by remember { mutableStateOf("") }
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     val processUris: (List<Uri>) -> Unit = { uris ->
         val selected = uris.take(MAX_AI_IMAGE_COUNT)
         imageName = "正在读取 1/${selected.size} 张图片…"
@@ -799,6 +801,18 @@ fun SmartAddScreen(
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(MAX_AI_IMAGE_COUNT)
     ) { uris -> if (uris.isNotEmpty()) processUris(uris) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { captured ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (captured && uri != null) {
+            processUris(listOf(uri))
+        } else if (uri != null) {
+            runCatching { context.contentResolver.delete(uri, null, null) }
+            imageName = "已取消拍照"
+        }
+    }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(contentPadding),
@@ -840,18 +854,43 @@ fun SmartAddScreen(
                 Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Icon(Icons.Outlined.Image, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
                     Text(imageName.ifBlank { "选择通知、聊天或考试时间截图" })
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                             enabled = !state.recognizing,
-                        ) { Text("选择图片（最多4张）") }
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) {
+                            Icon(Icons.Outlined.Image, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("相册（最多4张）")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                runCatching { createCameraImageUri(context) }
+                                    .onSuccess { uri ->
+                                        pendingCameraUri = uri
+                                        cameraLauncher.launch(uri)
+                                    }
+                                    .onFailure { imageName = it.message ?: "无法打开相机" }
+                            },
+                            enabled = !state.recognizing,
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) {
+                            Icon(Icons.Outlined.PhotoCamera, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("拍照")
+                        }
                         OutlinedButton(
                             onClick = {
                                 clipboardImageUri(context)?.let { processUris(listOf(it)) }
                                     ?: run { imageName = "剪贴板中没有可读取的图片" }
                             },
                             enabled = !state.recognizing,
-                        ) { Icon(Icons.Outlined.ContentPaste, null); Spacer(Modifier.width(5.dp)); Text("粘贴截图") }
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) { Icon(Icons.Outlined.ContentPaste, null); Spacer(Modifier.width(4.dp)); Text("粘贴") }
                     }
                 }
             }

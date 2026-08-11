@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.Percent
 import androidx.compose.material.icons.outlined.Pets
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.Restaurant
 import androidx.compose.material.icons.outlined.Savings
@@ -80,6 +81,7 @@ import androidx.compose.material.icons.outlined.WorkOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -95,6 +97,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -168,6 +171,7 @@ fun AccountingScreen(
     onAdd: () -> Unit,
     onEdit: (AccountEntry) -> Unit,
     onDelete: (AccountEntry) -> Unit,
+    onDeleteMany: (Collection<AccountEntry>) -> Unit,
     onAnalyzeFinancial: (String, String, AccountingSummary) -> Unit,
     onSaveMonthlyBudget: (YearMonth, Long) -> Unit,
     onSaveYearlyBudget: (Int, Long) -> Unit,
@@ -175,12 +179,21 @@ fun AccountingScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var monthOffset by rememberSaveable { mutableIntStateOf(0) }
     var selectedYear by rememberSaveable { mutableIntStateOf(LocalDate.now().year) }
+    var selectionMode by rememberSaveable { mutableStateOf(false) }
+    var selectedEntryIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var pendingDelete by remember { mutableStateOf<AccountEntry?>(null) }
+    var pendingBatchDelete by remember { mutableStateOf(false) }
     val month = remember(monthOffset) { YearMonth.now().plusMonths(monthOffset.toLong()) }
     val monthEntries = remember(entries, month) { accountEntriesInMonth(entries, month) }
     val monthSummary = remember(monthEntries) { summarizeAccounts(monthEntries) }
     val yearEntries = remember(entries, selectedYear) { accountEntriesInYear(entries, selectedYear) }
     val yearSummary = remember(yearEntries) { summarizeAccounts(yearEntries) }
+    val selectedEntries = monthEntries.filter { it.id in selectedEntryIds }
+
+    LaunchedEffect(monthEntries, selectedTab, selectionMode) {
+        selectedEntryIds = selectedEntryIds.intersect(monthEntries.mapTo(mutableSetOf(), AccountEntry::id))
+        if (selectedTab != 0 && selectionMode) selectionMode = false
+    }
 
     pendingDelete?.let { entry ->
         AlertDialog(
@@ -199,6 +212,25 @@ fun AccountingScreen(
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
         )
     }
+    if (pendingBatchDelete) {
+        AlertDialog(
+            onDismissRequest = { pendingBatchDelete = false },
+            title = { Text("确认删除所选流水") },
+            text = { Text("确定删除选中的 ${selectedEntries.size} 笔流水吗？删除后无法恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingBatchDelete = false
+                        selectionMode = false
+                        selectedEntryIds = emptySet()
+                        onDeleteMany(selectedEntries)
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text("确认删除") }
+            },
+            dismissButton = { TextButton(onClick = { pendingBatchDelete = false }) { Text("取消") } },
+        )
+    }
 
     Column(Modifier.fillMaxSize().padding(contentPadding)) {
         Row(
@@ -209,10 +241,43 @@ fun AccountingScreen(
                 Text("记账", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text("${entries.size} 笔本地流水", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Button(onClick = onAdd) {
-                Icon(Icons.Outlined.Add, null)
-                Spacer(Modifier.width(5.dp))
-                Text("记一笔")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (selectedTab == 0) {
+                    OutlinedButton(
+                        onClick = {
+                            selectionMode = !selectionMode
+                            selectedEntryIds = emptySet()
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                    ) { Text(if (selectionMode) "取消多选" else "多选") }
+                }
+                Button(onClick = onAdd) {
+                    Icon(Icons.Outlined.Add, null)
+                    Spacer(Modifier.width(5.dp))
+                    Text("记一笔")
+                }
+            }
+        }
+        if (selectionMode) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("已选择 ${selectedEntries.size} 笔", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                TextButton(
+                    onClick = { selectedEntryIds = monthEntries.mapTo(mutableSetOf(), AccountEntry::id) },
+                    enabled = monthEntries.isNotEmpty(),
+                ) { Text("全选") }
+                TextButton(onClick = { selectedEntryIds = emptySet() }, enabled = selectedEntries.isNotEmpty()) { Text("清空") }
+                TextButton(
+                    onClick = { pendingBatchDelete = true },
+                    enabled = selectedEntries.isNotEmpty(),
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(17.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("删除")
+                }
             }
         }
         TabRow(selectedTabIndex = selectedTab) {
@@ -234,6 +299,11 @@ fun AccountingScreen(
                 onNext = { monthOffset++ },
                 onEdit = onEdit,
                 onDelete = { pendingDelete = it },
+                selectionMode = selectionMode,
+                selectedEntryIds = selectedEntryIds,
+                onSelectionChanged = { id, selected ->
+                    selectedEntryIds = if (selected) selectedEntryIds + id else selectedEntryIds - id
+                },
             )
             1 -> AccountMonthSummary(
                 month = month,
@@ -277,6 +347,9 @@ private fun AccountLedger(
     onNext: () -> Unit,
     onEdit: (AccountEntry) -> Unit,
     onDelete: (AccountEntry) -> Unit,
+    selectionMode: Boolean,
+    selectedEntryIds: Set<Long>,
+    onSelectionChanged: (Long, Boolean) -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -305,7 +378,14 @@ private fun AccountLedger(
                     )
                 }
                 items(dayEntries, key = AccountEntry::id) { entry ->
-                    AccountEntryRow(entry, onEdit = { onEdit(entry) }, onDelete = { onDelete(entry) })
+                    AccountEntryRow(
+                        entry = entry,
+                        selectionMode = selectionMode,
+                        selected = entry.id in selectedEntryIds,
+                        onSelectionChanged = { onSelectionChanged(entry.id, it) },
+                        onEdit = { onEdit(entry) },
+                        onDelete = { onDelete(entry) },
+                    )
                 }
             }
         }
@@ -861,15 +941,27 @@ private fun CategorySummarySection(
 }
 
 @Composable
-private fun AccountEntryRow(entry: AccountEntry, onEdit: () -> Unit, onDelete: () -> Unit) {
+private fun AccountEntryRow(
+    entry: AccountEntry,
+    selectionMode: Boolean,
+    selected: Boolean,
+    onSelectionChanged: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val color = if (entry.type == AccountEntryType.INCOME) IncomeColor else ExpenseColor
     val prefix = if (entry.type == AccountEntryType.INCOME) "+" else "-"
     Surface(
-        Modifier.fillMaxWidth().clickable(onClick = onEdit),
+        Modifier.fillMaxWidth().clickable {
+            if (selectionMode) onSelectionChanged(!selected) else onEdit()
+        },
         shape = RoundedCornerShape(6.dp),
         tonalElevation = 1.dp,
     ) {
-        Row(Modifier.padding(start = 13.dp, top = 9.dp, bottom = 9.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(start = 7.dp, top = 9.dp, bottom = 9.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (selectionMode) {
+                Checkbox(checked = selected, onCheckedChange = onSelectionChanged)
+            }
             Column(Modifier.weight(1f)) {
                 Text(entry.category, fontWeight = FontWeight.Bold)
                 Text(
@@ -883,9 +975,11 @@ private fun AccountEntryRow(entry: AccountEntry, onEdit: () -> Unit, onDelete: (
                 )
             }
             Text("$prefix${formatMoney(entry.amountCents)}", color = color, fontWeight = FontWeight.Bold)
-            IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, "编辑流水") }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Outlined.DeleteOutline, "删除流水", tint = MaterialTheme.colorScheme.error)
+            if (!selectionMode) {
+                IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, "编辑流水") }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Outlined.DeleteOutline, "删除流水", tint = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }
@@ -938,6 +1032,7 @@ fun AccountEntryEditorScreen(
         Long,
         () -> Unit,
         (List<AccountClassificationResult>) -> Unit,
+        (String) -> Unit,
     ) -> Unit,
     onSaveEntries: (List<AccountEntry>, () -> Unit) -> Unit,
     onFinished: () -> Unit,
@@ -959,6 +1054,7 @@ fun AccountEntryEditorScreen(
     var recognitionMode by remember(initial) { mutableStateOf("text") }
     var accountImageStatus by remember(initial) { mutableStateOf("") }
     var preparingAccountImages by remember { mutableStateOf(false) }
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     var pendingDeleteCustomCategory by remember { mutableStateOf<String?>(null) }
     var reviewItems by remember(initial) { mutableStateOf<List<AccountClassificationResult>>(emptyList()) }
     var reviewedEntries by remember(initial) { mutableStateOf<List<AccountEntry>>(emptyList()) }
@@ -1055,6 +1151,7 @@ fun AccountEntryEditorScreen(
                         occurredAt,
                         onFinished,
                         ::beginReview,
+                        { message -> accountImageStatus = "识别失败：$message" },
                     )
                 }
             }
@@ -1063,6 +1160,18 @@ fun AccountEntryEditorScreen(
     val accountImagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(MAX_AI_IMAGE_COUNT)
     ) { uris -> processAccountImageUris(uris) }
+    val accountCameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { captured ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (captured && uri != null) {
+            processAccountImageUris(listOf(uri))
+        } else if (uri != null) {
+            runCatching { context.contentResolver.delete(uri, null, null) }
+            accountImageStatus = "已取消拍照"
+        }
+    }
 
     pendingDeleteCustomCategory?.let { categoryName ->
         AlertDialog(
@@ -1270,21 +1379,42 @@ fun AccountEntryEditorScreen(
                             accountImageStatus.ifBlank { "尚未选择购物清单或票据图片" },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Button(
-                            onClick = {
-                                accountImagePicker.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
-                            enabled = !preparingAccountImages && !classifyingAccount,
-                        ) {
-                            if (preparingAccountImages) {
-                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Outlined.Image, null)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    accountImagePicker.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                    )
+                                },
+                                enabled = !preparingAccountImages && !classifyingAccount,
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                            ) {
+                                if (preparingAccountImages) {
+                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Outlined.Image, null)
+                                }
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (preparingAccountImages) "读取中…" else "相册（最多4张）")
                             }
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (preparingAccountImages) "读取中…" else "选择图片（最多4张）")
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching { createCameraImageUri(context) }
+                                        .onSuccess { uri ->
+                                            pendingCameraUri = uri
+                                            accountCameraLauncher.launch(uri)
+                                        }
+                                        .onFailure { accountImageStatus = it.message ?: "无法打开相机" }
+                                },
+                                enabled = !preparingAccountImages && !classifyingAccount,
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                            ) {
+                                Icon(Icons.Outlined.PhotoCamera, null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("拍照")
+                            }
                         }
                     }
                 }

@@ -1,5 +1,6 @@
 package cn.aimemo.mobile.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.EventNote
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
@@ -62,6 +63,23 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
         showingSmartAdd = false
         showReminderLogs = false
         section = AppSection.SETTINGS
+    }
+    BackHandler(
+        enabled = editingSchedule != null || editingAccountEntry != null ||
+            editingRecognizedIndex >= 0 || showingSmartAdd,
+    ) {
+        when {
+            editingSchedule != null -> {
+                editingSchedule = null
+                if (!showingSmartAdd) section = AppSection.SCHEDULES
+            }
+            editingAccountEntry != null -> {
+                editingAccountEntry = null
+                section = AppSection.ACCOUNTING
+            }
+            editingRecognizedIndex >= 0 -> editingRecognizedIndex = -1
+            showingSmartAdd -> showingSmartAdd = false
+        }
     }
     val reminderListVisible = section == AppSection.SCHEDULES &&
         showReminderLogs && !showingSmartAdd && editingSchedule == null && editingRecognizedIndex < 0
@@ -261,6 +279,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                 },
                 onEdit = { editingAccountEntry = it },
                 onDelete = viewModel::deleteAccountEntry,
+                onDeleteMany = viewModel::deleteAccountEntries,
                 onAnalyzeFinancial = viewModel::analyzeFinancialSummary,
                 onSaveMonthlyBudget = viewModel::saveMonthlyBudget,
                 onSaveYearlyBudget = viewModel::saveYearlyBudget,
