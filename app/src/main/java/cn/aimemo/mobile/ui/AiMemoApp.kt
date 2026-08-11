@@ -71,7 +71,8 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
         when {
             editingSchedule != null -> {
                 editingSchedule = null
-                if (!showingSmartAdd) section = AppSection.SCHEDULES
+                showingSmartAdd = false
+                section = AppSection.SCHEDULES
             }
             editingAccountEntry != null -> {
                 editingAccountEntry = null
@@ -183,7 +184,10 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                 modifier = Modifier,
                 contentPadding = padding,
                 initial = editingSchedule,
-                onCancel = { editingSchedule = null },
+                onCancel = {
+                    editingSchedule = null
+                    showingSmartAdd = false
+                },
                 onSave = { schedule ->
                     viewModel.save(schedule) {
                         editingSchedule = null
