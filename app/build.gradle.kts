@@ -12,8 +12,8 @@ android {
         applicationId = "cn.aimemo.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 43
-        versionName = "0.9.1"
+        versionCode = 46
+        versionName = "0.9.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -24,6 +24,7 @@ android {
             isDebuggable = false
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

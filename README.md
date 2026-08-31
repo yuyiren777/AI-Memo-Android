@@ -4,13 +4,14 @@
 
 ## 下载最新版
 
-**[直接下载 AI-Memo-Android v0.9.1 APK](https://github.com/yuyiren777/AI-Memo-Android/releases/download/v0.9.1/AI-Memo-Android-v0.9.1.apk)**
+**[直接下载 AI-Memo-Android v0.9.4 APK](https://github.com/yuyiren777/AI-Memo-Android/releases/download/v0.9.4/AI-Memo-Android-v0.9.4.apk)**
 
 也可以进入 [Releases 页面](https://github.com/yuyiren777/AI-Memo-Android/releases/latest) 查看最新版本和安装包。
 
 ## 主要功能
 
-- 智谱 GLM 文本和图片识别，支持文本模型与视觉理解模型分开配置
+- 智谱 GLM 与 DeepSeek 文本和图片识别，支持文本模型与视觉理解模型分开配置
+- 默认模型：智谱 `GLM-4.7-Flash` / `GLM-4.6V-Flash`，DeepSeek `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp`
 - 从文字或最多 4 张图片识别日程，保存前可逐条检查和编辑
 - 日程和记账图片识别均支持直接拍照，记账图片仍限制最多 4 张
 - 手动新建、编辑、完成、恢复、删除和批量管理日程
@@ -51,7 +52,7 @@
 - SQLiteOpenHelper 本地数据库
 - AlarmManager + BroadcastReceiver 系统提醒
 - StateFlow + AndroidViewModel 状态管理
-- 智谱 OpenAI 兼容 HTTP 接口
+- 智谱与 DeepSeek OpenAI 兼容 HTTP 接口
 - 最低 Android 8.0（API 26），目标 Android 15（API 35）
 
 ## 项目目录
@@ -64,4 +65,4 @@ app/src/main/java/cn/aimemo/mobile/
 └── ui/          Compose 页面和主题
 ```
 
-当前公开版本：`v0.9.1`
+当前公开版本：`v0.9.4`

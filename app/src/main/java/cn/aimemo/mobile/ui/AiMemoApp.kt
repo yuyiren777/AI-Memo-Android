@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import cn.aimemo.mobile.data.Schedule
 import cn.aimemo.mobile.data.AccountEntry
 import cn.aimemo.mobile.data.AccountEntryType
+import cn.aimemo.mobile.ai.AiProvider
 
 private enum class AppSection(val label: String) {
     SCHEDULES("日程"), ACCOUNTING("记账"), SETTINGS("设置")
@@ -44,7 +45,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
     var editingRecognizedIndex by remember { mutableIntStateOf(-1) }
     var showingSmartAdd by rememberSaveable { mutableStateOf(false) }
     var smartAddMode by rememberSaveable { mutableStateOf("text") }
-    var showReminderLogs by rememberSaveable { mutableStateOf(false) }
+    var scheduleFilterMode by rememberSaveable { mutableStateOf("normal") }
 
     val openReminderLogs: () -> Unit = {
         section = AppSection.SCHEDULES
@@ -52,7 +53,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
         editingAccountEntry = null
         editingRecognizedIndex = -1
         showingSmartAdd = false
-        showReminderLogs = true
+        scheduleFilterMode = "reminded"
         viewModel.markReminderLogsSeen()
     }
     val openAiSettings: () -> Unit = {
@@ -61,7 +62,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
         editingAccountEntry = null
         editingRecognizedIndex = -1
         showingSmartAdd = false
-        showReminderLogs = false
+        scheduleFilterMode = "normal"
         section = AppSection.SETTINGS
     }
     BackHandler(
@@ -83,7 +84,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
         }
     }
     val reminderListVisible = section == AppSection.SCHEDULES &&
-        showReminderLogs && !showingSmartAdd && editingSchedule == null && editingRecognizedIndex < 0
+        scheduleFilterMode == "reminded" && !showingSmartAdd && editingSchedule == null && editingRecognizedIndex < 0
     LaunchedEffect(reminderListVisible, state.unreadReminderCount) {
         if (reminderListVisible && state.unreadReminderCount > 0) {
             viewModel.markReminderLogsSeen()
@@ -97,7 +98,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
             onDismissRequest = viewModel::consumeNotice,
             title = { Text("使用 AI 前还差一步") },
             text = {
-                Text("AI 功能需要先填写智谱 API Key。暂时不使用 AI 时，日程和记账的手动功能仍可正常使用。")
+                Text("AI 功能需要先填写${AiProvider.fromId(state.aiProvider).label} API Key。暂时不使用 AI 时，日程和记账的手动功能仍可正常使用。")
             },
             confirmButton = {
                 TextButton(
@@ -157,6 +158,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                         selected = section == target,
                         onClick = {
                             section = target
+                            if (target == AppSection.SCHEDULES) scheduleFilterMode = "normal"
                             editingSchedule = null
                             editingAccountEntry = null
                             editingRecognizedIndex = -1
@@ -261,10 +263,10 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                 onBatchDelete = viewModel::deleteSchedules,
                 onImport = viewModel::importBackup,
                 onDeleteReminderLog = viewModel::deleteReminderLog,
-                showReminderLogs = showReminderLogs,
-                onShowReminderLogsChange = { visible ->
-                    showReminderLogs = visible
-                    if (visible) viewModel.markReminderLogsSeen()
+                scheduleFilterMode = scheduleFilterMode,
+                onScheduleFilterModeChange = { mode ->
+                    scheduleFilterMode = mode
+                    if (mode == "reminded") viewModel.markReminderLogsSeen()
                 },
             )
             section == AppSection.ACCOUNTING -> AccountingScreen(
@@ -293,6 +295,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                 state = state,
                 onThemeModeChanged = viewModel::setThemeMode,
                 onReminderSettingsChanged = viewModel::saveReminderSettings,
+                onAiProviderChanged = viewModel::switchAiProvider,
                 onEnableCaptureProtection = viewModel::enableCaptureProtection,
                 onDisableCaptureProtection = viewModel::disableCaptureProtection,
                 onModelSettingsChanged = viewModel::saveModelSettings,

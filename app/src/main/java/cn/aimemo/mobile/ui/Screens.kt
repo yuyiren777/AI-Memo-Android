@@ -84,7 +84,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import cn.aimemo.mobile.ai.ZhipuAiClient
+import cn.aimemo.mobile.ai.AiProvider
 import cn.aimemo.mobile.BuildConfig
 import cn.aimemo.mobile.data.ReminderLog
 import cn.aimemo.mobile.data.Schedule
@@ -133,8 +133,8 @@ fun ScheduleListScreen(
     onBatchDelete: (List<Schedule>) -> Unit,
     onImport: (SecureBackupContents) -> Unit,
     onDeleteReminderLog: (Long) -> Unit,
-    showReminderLogs: Boolean,
-    onShowReminderLogsChange: (Boolean) -> Unit,
+    scheduleFilterMode: String,
+    onScheduleFilterModeChange: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -180,7 +180,6 @@ fun ScheduleListScreen(
             }
         }
     }
-    var showCompleted by remember { mutableStateOf(false) }
     var newMenuExpanded by remember { mutableStateOf(false) }
     var backupMenuExpanded by remember { mutableStateOf(false) }
     var filterMenuExpanded by remember { mutableStateOf(false) }
@@ -191,14 +190,31 @@ fun ScheduleListScreen(
     var pendingBatchAction by remember { mutableStateOf<BatchScheduleAction?>(null) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
+    val showingCompleted = scheduleFilterMode == "completed"
+    val showingReminderLogs = scheduleFilterMode == "reminded"
+    val remindedScheduleIds = remember(state.reminderLogs) {
+        state.reminderLogs.mapTo(mutableSetOf(), ReminderLog::scheduleId)
+    }
+
+    LaunchedEffect(scheduleFilterMode) {
+        selectionMode = false
+        selectedScheduleIds = emptySet()
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             delay(60_000 - System.currentTimeMillis() % 60_000)
             now = System.currentTimeMillis()
         }
     }
-    val visible by remember(state.schedules, showCompleted) {
-        derivedStateOf { state.schedules.filter { showCompleted || !it.completed } }
+    val visible by remember(state.schedules, state.reminderLogs, scheduleFilterMode) {
+        derivedStateOf {
+            when (scheduleFilterMode) {
+                "completed" -> state.schedules.filter(Schedule::completed)
+                "reminded" -> state.schedules.filter { it.id in remindedScheduleIds }
+                else -> state.schedules.filterNot(Schedule::completed)
+            }
+        }
     }
     val selectedSchedules = state.schedules.filter { it.id in selectedScheduleIds }
     val selectedPendingSchedules = selectedSchedules.filterNot(Schedule::completed)
@@ -411,13 +427,19 @@ fun ScheduleListScreen(
                 ) {
                     DropdownMenuItem(
                         text = { Text("显示已完成日程") },
-                        leadingIcon = { Checkbox(showCompleted, onCheckedChange = null) },
-                        onClick = { showCompleted = !showCompleted },
+                        leadingIcon = { Checkbox(showingCompleted, onCheckedChange = null) },
+                        onClick = {
+                            filterMenuExpanded = false
+                            onScheduleFilterModeChange(if (showingCompleted) "normal" else "completed")
+                        },
                     )
                     DropdownMenuItem(
                         text = { Text("显示已提醒日程") },
-                        leadingIcon = { Checkbox(showReminderLogs, onCheckedChange = null) },
-                        onClick = { onShowReminderLogsChange(!showReminderLogs) },
+                        leadingIcon = { Checkbox(showingReminderLogs, onCheckedChange = null) },
+                        onClick = {
+                            filterMenuExpanded = false
+                            onScheduleFilterModeChange(if (showingReminderLogs) "normal" else "reminded")
+                        },
                     )
                 }
             }
@@ -455,7 +477,55 @@ fun ScheduleListScreen(
         Spacer(Modifier.height(6.dp))
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            visible.isEmpty() && !showReminderLogs -> EmptyScheduleState()
+            showingReminderLogs -> LazyColumn(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 18.dp),
+            ) {
+                item(key = "reminder_log_header") {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "已提醒日程",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("${visible.size} 项", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (visible.isEmpty()) {
+                    item(key = "empty_reminder_logs") {
+                        Text(
+                            "还没有符合条件的已提醒日程",
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    items(visible, key = Schedule::id) { schedule ->
+                        ScheduleCard(
+                            schedule = schedule,
+                            nowMillis = now,
+                            selectionMode = false,
+                            selected = false,
+                            onSelectionChanged = {},
+                            onEdit = { onEdit(schedule) },
+                            onCompletedRequested = { completed ->
+                                pendingCompletion = CompletionChange(schedule, completed)
+                            },
+                            onDeleteRequested = { pendingDeletion = schedule },
+                        )
+                    }
+                }
+            }
+            visible.isEmpty() -> {
+                if (scheduleFilterMode == "normal") EmptyScheduleState()
+                else FilteredScheduleEmptyState()
+            }
             else -> LazyColumn(
                 Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -507,36 +577,6 @@ fun ScheduleListScreen(
                         )
                     }
                 }
-                if (showReminderLogs) {
-                    item(key = "reminder_log_header") {
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "已提醒日程",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text("${state.reminderLogs.size} 条", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    if (state.reminderLogs.isEmpty()) {
-                        item(key = "empty_reminder_logs") {
-                            Text(
-                                "还没有提醒记录",
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    } else {
-                        items(state.reminderLogs, key = { "reminder_${it.id}" }) { log ->
-                            ReminderLogCard(log, onDelete = { onDeleteReminderLog(log.id) })
-                        }
-                    }
-                }
             }
         }
     }
@@ -550,6 +590,16 @@ private fun EmptyScheduleState() {
             Spacer(Modifier.height(12.dp))
             Text("还没有待办日程", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
         }
+    }
+}
+
+@Composable
+private fun FilteredScheduleEmptyState() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            "当前没有符合筛选条件的日程",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -931,17 +981,20 @@ fun SettingsScreen(
     state: AppUiState,
     onThemeModeChanged: (String) -> Unit,
     onReminderSettingsChanged: (Int, Int?, Int?) -> Unit,
+    onAiProviderChanged: (String) -> Unit,
     onEnableCaptureProtection: () -> Unit,
     onDisableCaptureProtection: suspend (CharArray, CharArray?) -> String?,
-    onModelSettingsChanged: (String, String, String, String, String) -> Unit,
+    onModelSettingsChanged: (String, String, String, String, String, String) -> Unit,
     onClearApiKey: () -> Unit,
     onTestConnection: () -> Unit,
 ) {
+    var provider by remember(state.aiProvider) { mutableStateOf(state.aiProvider) }
     var mode by remember(state.modelMode) { mutableStateOf(state.modelMode) }
     var apiKey by remember { mutableStateOf("") }
     var unified by remember(state.unifiedModel) { mutableStateOf(state.unifiedModel) }
     var textModel by remember(state.textModel) { mutableStateOf(state.textModel) }
     var imageModel by remember(state.imageModel) { mutableStateOf(state.imageModel) }
+    var providerMenuExpanded by remember { mutableStateOf(false) }
     var modelModeMenuExpanded by remember { mutableStateOf(false) }
     var showCaptureProtectionWarning by remember { mutableStateOf(false) }
     var showCapturePasswordDialog by remember { mutableStateOf(false) }
@@ -956,6 +1009,7 @@ fun SettingsScreen(
     var secondParts by remember(state.secondReminderMinutes) { mutableStateOf(minutesToParts(state.secondReminderMinutes ?: 0)) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val selectedProvider = AiProvider.fromId(provider)
 
     if (showCaptureProtectionWarning) {
         AlertDialog(
@@ -1083,8 +1137,34 @@ fun SettingsScreen(
         OutlinedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("AI 模型", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Text("API Key 已加密保存在本机。默认模型服务为智谱。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://open.bigmodel.cn/"))) }) { Text("点我申请智谱 API Key") }
+                Text("API Key 已加密保存在本机。当前服务：${selectedProvider.label}。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(selectedProvider.apiKeyUrl))) }) { Text("点我申请${selectedProvider.label} API Key") }
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { providerMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("AI 服务：${selectedProvider.label}", modifier = Modifier.weight(1f))
+                        Icon(Icons.Outlined.ArrowDropDown, contentDescription = "选择 AI 服务")
+                    }
+                    DropdownMenu(
+                        expanded = providerMenuExpanded,
+                        onDismissRequest = { providerMenuExpanded = false },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        AiProvider.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = {
+                                    provider = option.id
+                                    apiKey = ""
+                                    providerMenuExpanded = false
+                                    onAiProviderChanged(option.id)
+                                },
+                            )
+                        }
+                    }
+                }
                 Box(Modifier.fillMaxWidth()) {
                     OutlinedButton(
                         onClick = { modelModeMenuExpanded = true },
@@ -1139,15 +1219,15 @@ fun SettingsScreen(
                         modifier = Modifier.align(Alignment.End),
                     ) { Text("清除已保存 Key") }
                 }
-                if (mode == "unified") OutlinedTextField(unified, { unified = it }, Modifier.fillMaxWidth(), label = { Text("视觉理解模型（留空用 ${ZhipuAiClient.DEFAULT_IMAGE_MODEL}）") }, singleLine = true)
+                if (mode == "unified") OutlinedTextField(unified, { unified = it }, Modifier.fillMaxWidth(), label = { Text("视觉理解模型（留空用 ${selectedProvider.defaultImageModel}）") }, singleLine = true)
                 else {
-                    OutlinedTextField(textModel, { textModel = it }, Modifier.fillMaxWidth(), label = { Text("文本模型（留空用 ${ZhipuAiClient.DEFAULT_TEXT_MODEL}）") }, singleLine = true)
-                    OutlinedTextField(imageModel, { imageModel = it }, Modifier.fillMaxWidth(), label = { Text("视觉理解模型（留空用 ${ZhipuAiClient.DEFAULT_IMAGE_MODEL}）") }, singleLine = true)
+                    OutlinedTextField(textModel, { textModel = it }, Modifier.fillMaxWidth(), label = { Text("文本模型（留空用 ${selectedProvider.defaultTextModel}）") }, singleLine = true)
+                    OutlinedTextField(imageModel, { imageModel = it }, Modifier.fillMaxWidth(), label = { Text("视觉理解模型（留空用 ${selectedProvider.defaultImageModel}）") }, singleLine = true)
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
                     OutlinedButton(
                         onClick = {
-                            onModelSettingsChanged(mode, apiKey, unified, textModel, imageModel)
+                            onModelSettingsChanged(provider, mode, apiKey, unified, textModel, imageModel)
                             apiKey = ""
                             onTestConnection()
                         },
@@ -1155,7 +1235,7 @@ fun SettingsScreen(
                     ) { Text("测试连接") }
                     Button(
                         onClick = {
-                            onModelSettingsChanged(mode, apiKey, unified, textModel, imageModel)
+                            onModelSettingsChanged(provider, mode, apiKey, unified, textModel, imageModel)
                             apiKey = ""
                         },
                         enabled = apiKey.isNotBlank() || state.hasApiKey,
@@ -1243,7 +1323,7 @@ fun SettingsScreen(
         OutlinedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("隐私与数据", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Text("API Key、日程、账单、提醒历史、自定义分类和预算设置均已加密保存在本机；仅在进行 AI 识别或用户主动分析收支时，发送本次选择的文字、图片或当前周期汇总给智谱模型服务。")
+                Text("API Key、日程、账单、提醒历史、自定义分类和预算设置均已加密保存在本机；仅在进行 AI 识别或用户主动分析收支时，发送本次选择的文字、图片或当前周期汇总给${selectedProvider.label}模型服务。")
                 HorizontalDivider()
                 SettingSwitchRow("截图与录屏保护", state.captureProtectionEnabled) { enabled ->
                     if (enabled) {

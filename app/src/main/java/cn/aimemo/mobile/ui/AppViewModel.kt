@@ -8,6 +8,7 @@ import cn.aimemo.mobile.AiMemoApplication
 import cn.aimemo.mobile.ai.AccountClassificationResult
 import cn.aimemo.mobile.ai.AccountExtractor
 import cn.aimemo.mobile.ai.ScheduleExtractor
+import cn.aimemo.mobile.ai.AiProvider
 import cn.aimemo.mobile.ai.AiTimeoutException
 import cn.aimemo.mobile.ai.ZhipuAiClient
 import cn.aimemo.mobile.data.AccountEntry
@@ -55,6 +56,7 @@ data class AppUiState(
     val finalReminderMinutes: Int = 30,
     val firstReminderMinutes: Int? = null,
     val secondReminderMinutes: Int? = null,
+    val aiProvider: String = "zhipu",
     val hasApiKey: Boolean = false,
     val modelMode: String = "separate",
     val unifiedModel: String = "",
@@ -100,6 +102,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         finalReminderMinutes = app.preferences.finalReminderMinutes,
         firstReminderMinutes = app.preferences.firstReminderMinutes,
         secondReminderMinutes = app.preferences.secondReminderMinutes,
+        aiProvider = app.preferences.aiProvider,
         hasApiKey = app.preferences.hasApiKey,
         modelMode = app.preferences.modelMode,
         unifiedModel = app.preferences.unifiedModel,
@@ -699,9 +702,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.rescheduleAll() }
     }
 
-    fun saveModelSettings(mode: String, apiKey: String, unified: String, text: String, image: String) {
+    fun saveModelSettings(provider: String, mode: String, apiKey: String, unified: String, text: String, image: String) {
+        app.preferences.aiProvider = provider
         app.preferences.modelMode = mode
-        if (apiKey.isNotBlank()) app.preferences.apiKey = apiKey
+        if (apiKey.isNotBlank()) app.preferences.activeApiKey = apiKey
         app.preferences.unifiedModel = unified
         app.preferences.textModel = text
         app.preferences.imageModel = image
@@ -711,19 +715,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             text.isBlank() || image.isBlank()
         }
         _uiState.value = _uiState.value.copy(
+            aiProvider = app.preferences.aiProvider,
             modelMode = mode, hasApiKey = app.preferences.hasApiKey, unifiedModel = unified,
             textModel = text,
             imageModel = image,
             message = if (usesDefaultModel) {
-                "当前使用智谱提供的免费默认模型。免费模型的连接稳定性和识别能力可能有限，后续可以随时在这里填写其他兼容模型。"
+                "当前使用${AiProvider.fromId(app.preferences.aiProvider).label}提供的默认模型。费用和限额请以服务商页面为准。"
             } else {
                 "模型设置已保存"
             },
         )
     }
 
+    fun switchAiProvider(provider: String) {
+        app.preferences.aiProvider = provider
+        _uiState.value = _uiState.value.copy(
+            aiProvider = app.preferences.aiProvider,
+            hasApiKey = app.preferences.hasApiKey,
+            unifiedModel = app.preferences.unifiedModel,
+            textModel = app.preferences.textModel,
+            imageModel = app.preferences.imageModel,
+            message = null,
+            error = null,
+        )
+    }
+
     fun clearApiKey() {
-        app.preferences.apiKey = ""
+        app.preferences.activeApiKey = ""
         _uiState.value = _uiState.value.copy(hasApiKey = false, message = "API Key 已从本机清除")
     }
 
