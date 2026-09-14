@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "AI Memo Android"
 include(":app")
+

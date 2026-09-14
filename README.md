@@ -4,7 +4,7 @@
 
 ## 下载最新版
 
-**[直接下载 AI-Memo-Android v0.9.4 APK](https://github.com/yuyiren777/AI-Memo-Android/releases/download/v0.9.4/AI-Memo-Android-v0.9.4.apk)**
+**[直接下载 AI-Memo-Android v0.9.5 APK](https://github.com/yuyiren777/AI-Memo-Android/releases/download/v0.9.5/AI-Memo-Android-v0.9.5.apk)**
 
 也可以进入 [Releases 页面](https://github.com/yuyiren777/AI-Memo-Android/releases/latest) 查看最新版本和安装包。
 
@@ -65,4 +65,4 @@ app/src/main/java/cn/aimemo/mobile/
 └── ui/          Compose 页面和主题
 ```
 
-当前公开版本：`v0.9.4`
+当前公开版本：`v0.9.5`

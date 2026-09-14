@@ -248,12 +248,25 @@ class ZhipuAiClient(private val preferences: AppPreferences) {
                     if (!line.startsWith("data:")) continue
                     val payload = line.removePrefix("data:").trim()
                     if (payload == "[DONE]") break
+                    // Providers send an initial SSE frame (and sometimes usage
+                    // frames) whose delta.content is JSON null.  JSONObject's
+                    // optString implementation can expose JSONObject.NULL as
+                    // the literal string "null" on some Android versions. If
+                    // that value is appended to the UI it becomes the endless
+                    // `nullnullnull` text users see. Only forward actual,
+                    // non-blank string content from a delta frame.
                     val delta = runCatching {
-                        JSONObject(payload)
+                        val deltaObject = JSONObject(payload)
                             .optJSONArray("choices")
                             ?.optJSONObject(0)
                             ?.optJSONObject("delta")
-                            ?.optString("content")
+                        val content = deltaObject?.opt("content")
+                        val text = content as? String
+                        when {
+                            text == null || text.isBlank() -> ""
+                            text.trim().equals("null", ignoreCase = true) -> ""
+                            else -> text
+                        }
                     }.getOrNull().orEmpty()
                     if (delta.isNotEmpty()) {
                         receivedCharacters += delta.length

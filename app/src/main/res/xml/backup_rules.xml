@@ -6,3 +6,4 @@
     <exclude domain="file" path="." />
     <exclude domain="external" path="." />
 </full-backup-content>
+
