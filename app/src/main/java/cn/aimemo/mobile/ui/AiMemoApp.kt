@@ -1,19 +1,25 @@
 package cn.aimemo.mobile.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.EventNote
-import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
-import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.BottomAppBar
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -24,45 +30,83 @@ import androidx.compose.ui.Modifier
 import cn.aimemo.mobile.data.Schedule
 import cn.aimemo.mobile.data.AccountEntry
 import cn.aimemo.mobile.data.AccountEntryType
+import cn.aimemo.mobile.ai.AiProvider
 
 private enum class AppSection(val label: String) {
-    SCHEDULES("日程"), ADD("添加"), ACCOUNTING("记账"), HISTORY("记录"), SETTINGS("设置")
+    SCHEDULES("日程"), ACCOUNTING("记账"), SETTINGS("设置")
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
     var section by rememberSaveable { mutableStateOf(AppSection.SCHEDULES) }
     var editingSchedule by remember { mutableStateOf<Schedule?>(null) }
     var editingAccountEntry by remember { mutableStateOf<AccountEntry?>(null) }
     var editingRecognizedIndex by remember { mutableIntStateOf(-1) }
+    var showingSmartAdd by rememberSaveable { mutableStateOf(false) }
+    var smartAddMode by rememberSaveable { mutableStateOf("text") }
+    var scheduleFilterMode by rememberSaveable { mutableStateOf("normal") }
+
+    val openReminderLogs: () -> Unit = {
+        section = AppSection.SCHEDULES
+        editingSchedule = null
+        editingAccountEntry = null
+        editingRecognizedIndex = -1
+        showingSmartAdd = false
+        scheduleFilterMode = "reminded"
+        viewModel.markReminderLogsSeen()
+    }
+    val openAiSettings: () -> Unit = {
+        viewModel.consumeNotice()
+        editingSchedule = null
+        editingAccountEntry = null
+        editingRecognizedIndex = -1
+        showingSmartAdd = false
+        scheduleFilterMode = "normal"
+        section = AppSection.SETTINGS
+    }
+    BackHandler(
+        enabled = editingSchedule != null || editingAccountEntry != null ||
+            editingRecognizedIndex >= 0 || showingSmartAdd,
+    ) {
+        when {
+            editingSchedule != null -> {
+                editingSchedule = null
+                showingSmartAdd = false
+                section = AppSection.SCHEDULES
+            }
+            editingAccountEntry != null -> {
+                editingAccountEntry = null
+                section = AppSection.ACCOUNTING
+            }
+            editingRecognizedIndex >= 0 -> editingRecognizedIndex = -1
+            showingSmartAdd -> showingSmartAdd = false
+        }
+    }
+    val reminderListVisible = section == AppSection.SCHEDULES &&
+        scheduleFilterMode == "reminded" && !showingSmartAdd && editingSchedule == null && editingRecognizedIndex < 0
+    LaunchedEffect(reminderListVisible, state.unreadReminderCount) {
+        if (reminderListVisible && state.unreadReminderCount > 0) {
+            viewModel.markReminderLogsSeen()
+        }
+    }
 
     val apiKeyRequired = state.error?.contains("API Key", ignoreCase = true) == true
 
     if (apiKeyRequired) {
         AlertDialog(
             onDismissRequest = viewModel::consumeNotice,
-            title = { Text("使用 AI 前还差一步（也可以手动添加）") },
+            title = { Text("使用 AI 前还差一步") },
             text = {
-                Text("AI 识别需要先填写智谱 API Key。如果暂时不想接入 AI，可以直接手动记录日程，其他功能不受影响。")
+                Text("AI 功能需要先填写${AiProvider.fromId(state.aiProvider).label} API Key。暂时不使用 AI 时，日程和记账的手动功能仍可正常使用。")
             },
             confirmButton = {
                 TextButton(
-                    onClick = {
-                        viewModel.consumeNotice()
-                        editingSchedule = null
-                        editingRecognizedIndex = -1
-                        section = AppSection.SETTINGS
-                    },
+                    onClick = openAiSettings,
                 ) { Text("去填写 API Key") }
             },
             dismissButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.consumeNotice()
-                        editingSchedule = Schedule(title = "")
-                        editingRecognizedIndex = -1
-                    },
-                ) { Text("手动添加日程") }
+                TextButton(onClick = viewModel::consumeNotice) { Text("暂不使用") }
             },
         )
     } else if (state.suggestModelSwitch) {
@@ -72,12 +116,7 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
             text = { Text("当前模型暂时没有响应。是否前往模型配置页切换模型？也可以稍后再试。") },
             confirmButton = {
                 TextButton(
-                    onClick = {
-                        viewModel.consumeNotice()
-                        editingSchedule = null
-                        editingRecognizedIndex = -1
-                        section = AppSection.SETTINGS
-                    },
+                    onClick = openAiSettings,
                 ) { Text("去切换模型") }
             },
             dismissButton = {
@@ -94,24 +133,48 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
     }
 
     Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("AI备忘录") },
+                actions = {
+                    IconButton(onClick = openReminderLogs) {
+                        BadgedBox(
+                            badge = { UnreadReminderBadge(state.unreadReminderCount) },
+                        ) {
+                            Icon(Icons.Outlined.NotificationsNone, "查看已提醒日程")
+                        }
+                    }
+                },
+            )
+        },
         bottomBar = {
             BottomAppBar {
                 listOf(
                     Triple(AppSection.SCHEDULES, Icons.AutoMirrored.Outlined.EventNote, "日程"),
-                    Triple(AppSection.ADD, Icons.Outlined.AddCircleOutline, "添加"),
                     Triple(AppSection.ACCOUNTING, Icons.Outlined.AccountBalanceWallet, "记账"),
-                    Triple(AppSection.HISTORY, Icons.Outlined.History, "提醒记录"),
                     Triple(AppSection.SETTINGS, Icons.Outlined.Settings, "设置"),
                 ).forEach { (target, icon, description) ->
                     NavigationBarItem(
                         selected = section == target,
                         onClick = {
                             section = target
+                            if (target == AppSection.SCHEDULES) scheduleFilterMode = "normal"
                             editingSchedule = null
                             editingAccountEntry = null
                             editingRecognizedIndex = -1
+                            showingSmartAdd = false
                         },
-                        icon = { Icon(icon, description) },
+                        icon = {
+                            BadgedBox(
+                                badge = {
+                                    if (target == AppSection.SCHEDULES) {
+                                        UnreadReminderBadge(state.unreadReminderCount)
+                                    }
+                                },
+                            ) {
+                                Icon(icon, description)
+                            }
+                        },
                         label = { Text(target.label) },
                     )
                 }
@@ -123,10 +186,14 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                 modifier = Modifier,
                 contentPadding = padding,
                 initial = editingSchedule,
-                onCancel = { editingSchedule = null },
+                onCancel = {
+                    editingSchedule = null
+                    showingSmartAdd = false
+                },
                 onSave = { schedule ->
                     viewModel.save(schedule) {
                         editingSchedule = null
+                        showingSmartAdd = false
                         section = AppSection.SCHEDULES
                     }
                 },
@@ -144,38 +211,71 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
             editingAccountEntry != null -> AccountEntryEditorScreen(
                 contentPadding = padding,
                 initial = requireNotNull(editingAccountEntry),
+                customExpenseCategories = state.customExpenseCategories,
+                customIncomeCategories = state.customIncomeCategories,
+                classifyingAccount = state.classifyingAccount,
+                accountClassificationStatus = state.accountClassificationStatus,
+                savingAccountEntries = state.savingAccountEntries,
                 onCancel = { editingAccountEntry = null },
-                onSave = { entry ->
-                    viewModel.saveAccountEntry(entry) {
-                        editingAccountEntry = null
-                        section = AppSection.ACCOUNTING
+                onAddCustomCategory = viewModel::addCustomAccountCategory,
+                onDeleteCustomCategory = viewModel::deleteCustomAccountCategory,
+                onClassifyAccount = viewModel::classifyAccountText,
+                onClassifyAccountImages = viewModel::classifyAccountImages,
+                onSaveEntries = viewModel::saveAccountEntries,
+                onFinished = {
+                    editingAccountEntry = null
+                    section = AppSection.ACCOUNTING
+                },
+            )
+            showingSmartAdd -> SmartAddScreen(
+                contentPadding = padding,
+                state = state,
+                initialMode = smartAddMode,
+                onBack = { showingSmartAdd = false },
+                onRecognizeText = viewModel::recognizeText,
+                onRecognizeImages = viewModel::recognizeImages,
+                onManualAdd = { editingSchedule = Schedule(title = "") },
+                onEditResult = { editingRecognizedIndex = it },
+                onRemoveResult = viewModel::removeRecognized,
+                onSaveAll = {
+                    viewModel.saveRecognized {
+                        showingSmartAdd = false
+                        section = AppSection.SCHEDULES
                     }
                 },
             )
             section == AppSection.SCHEDULES -> ScheduleListScreen(
                 contentPadding = padding,
                 state = state,
-                onAdd = { section = AppSection.ADD },
+                onTextRecognition = {
+                    smartAddMode = "text"
+                    showingSmartAdd = true
+                },
+                onImageRecognition = {
+                    smartAddMode = "image"
+                    showingSmartAdd = true
+                },
+                onManualAdd = { editingSchedule = Schedule(title = "") },
                 onEdit = { editingSchedule = it },
                 onCompleted = viewModel::setCompleted,
                 onDelete = viewModel::delete,
                 onBatchCompleted = viewModel::setSchedulesCompleted,
                 onBatchDelete = viewModel::deleteSchedules,
-                onImport = viewModel::importSchedules,
-            )
-            section == AppSection.ADD -> SmartAddScreen(
-                contentPadding = padding,
-                state = state,
-                onRecognizeText = viewModel::recognizeText,
-                onRecognizeImages = viewModel::recognizeImages,
-                onManualAdd = { editingSchedule = Schedule(title = "") },
-                onEditResult = { editingRecognizedIndex = it },
-                onRemoveResult = viewModel::removeRecognized,
-                onSaveAll = { viewModel.saveRecognized { section = AppSection.SCHEDULES } },
+                onImport = viewModel::importBackup,
+                onDeleteReminderLog = viewModel::deleteReminderLog,
+                scheduleFilterMode = scheduleFilterMode,
+                onScheduleFilterModeChange = { mode ->
+                    scheduleFilterMode = mode
+                    if (mode == "reminded") viewModel.markReminderLogsSeen()
+                },
             )
             section == AppSection.ACCOUNTING -> AccountingScreen(
                 contentPadding = padding,
                 entries = state.accountEntries,
+                budgetSettings = state.budgetSettings,
+                analyzingFinancial = state.analyzingFinancial,
+                financialAnalysisPeriodKey = state.financialAnalysisPeriodKey,
+                financialAnalysis = state.financialAnalysis,
                 onAdd = {
                     editingAccountEntry = AccountEntry(
                         type = AccountEntryType.EXPENSE,
@@ -185,20 +285,32 @@ fun AiMemoApp(viewModel: AppViewModel, state: AppUiState) {
                 },
                 onEdit = { editingAccountEntry = it },
                 onDelete = viewModel::deleteAccountEntry,
-            )
-            section == AppSection.HISTORY -> ReminderHistoryScreen(
-                contentPadding = padding,
-                logs = state.reminderLogs,
-                onDelete = viewModel::deleteReminderLog,
+                onDeleteMany = viewModel::deleteAccountEntries,
+                onAnalyzeFinancial = viewModel::analyzeFinancialSummary,
+                onSaveMonthlyBudget = viewModel::saveMonthlyBudget,
+                onSaveYearlyBudget = viewModel::saveYearlyBudget,
             )
             else -> SettingsScreen(
                 contentPadding = padding,
                 state = state,
-                onDarkModeChanged = viewModel::setDarkMode,
+                onThemeModeChanged = viewModel::setThemeMode,
                 onReminderSettingsChanged = viewModel::saveReminderSettings,
+                onAiProviderChanged = viewModel::switchAiProvider,
+                onEnableCaptureProtection = viewModel::enableCaptureProtection,
+                onDisableCaptureProtection = viewModel::disableCaptureProtection,
                 onModelSettingsChanged = viewModel::saveModelSettings,
+                onClearApiKey = viewModel::clearApiKey,
                 onTestConnection = viewModel::testConnection,
             )
         }
+    }
+}
+
+@Composable
+private fun UnreadReminderBadge(count: Int) {
+    when {
+        count <= 0 -> Unit
+        count == 1 -> Badge()
+        else -> Badge { Text(if (count > 99) "99+" else count.toString()) }
     }
 }

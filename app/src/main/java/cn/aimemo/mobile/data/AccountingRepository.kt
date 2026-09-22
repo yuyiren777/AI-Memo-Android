@@ -22,8 +22,28 @@ class AccountingRepository(private val database: ScheduleDatabase) {
         saved
     }
 
+    suspend fun saveAll(entries: List<AccountEntry>): List<AccountEntry> = withContext(Dispatchers.IO) {
+        require(entries.isNotEmpty()) { "没有可保存的账目" }
+        entries.forEach { entry ->
+            require(entry.amountCents > 0) { "金额必须大于 0" }
+            require(entry.category.isNotBlank()) { "请选择收支分类" }
+        }
+        val saved = database.saveAccountEntries(entries)
+        _entries.value = database.listAccountEntries()
+        saved
+    }
+
     suspend fun delete(entry: AccountEntry) = withContext(Dispatchers.IO) {
         database.deleteAccountEntry(entry.id)
         _entries.value = database.listAccountEntries()
+    }
+
+    suspend fun deleteAll(entries: Collection<AccountEntry>) = withContext(Dispatchers.IO) {
+        database.deleteAccountEntries(entries.map(AccountEntry::id))
+        _entries.value = database.listAccountEntries()
+    }
+
+    fun clearMemory() {
+        _entries.value = emptyList()
     }
 }

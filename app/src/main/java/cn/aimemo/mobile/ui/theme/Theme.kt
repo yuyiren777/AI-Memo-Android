@@ -36,15 +36,45 @@ private val DarkColors = darkColorScheme(
     outline = Color(0xFF819194),
 )
 
+private val SoftColors = darkColorScheme(
+    primary = Color(0xFFE6C98A),
+    onPrimary = Color(0xFF3B2E18),
+    primaryContainer = Color(0xFF6B572D),
+    onPrimaryContainer = Color(0xFFFFEFC7),
+    secondary = Color(0xFFD7BFA1),
+    onSecondary = Color(0xFF3A2B21),
+    secondaryContainer = Color(0xFF524038),
+    onSecondaryContainer = Color(0xFFF4DED0),
+    tertiary = Color(0xFFB7D0B8),
+    onTertiary = Color(0xFF203521),
+    tertiaryContainer = Color(0xFF3B533D),
+    onTertiaryContainer = Color(0xFFD9F2D9),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF93000A),
+    onErrorContainer = Color(0xFFFFDAD6),
+    background = Color(0xFF211E1A),
+    surface = Color(0xFF2D2821),
+    surfaceVariant = Color(0xFF4A4032),
+    outline = Color(0xFFA99B83),
+    inverseSurface = Color(0xFFF0E2C4),
+    inverseOnSurface = Color(0xFF373027),
+    inversePrimary = Color(0xFF765A1C),
+)
+
 val ImportantColor = Color(0xFFD69A20)
 val UrgentColor = Color(0xFFD25050)
 val NormalColor = Color(0xFF3BAE68)
 
 @Composable
-fun AiMemoTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
+fun AiMemoTheme(themeMode: String, content: @Composable () -> Unit) {
+    val colors = when (themeMode) {
+        "dark" -> DarkColors
+        "light" -> LightColors
+        else -> SoftColors
+    }
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = colors,
         content = content,
     )
 }
-

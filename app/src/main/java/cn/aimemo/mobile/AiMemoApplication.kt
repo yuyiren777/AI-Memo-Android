@@ -6,8 +6,13 @@ import cn.aimemo.mobile.data.ScheduleDatabase
 import cn.aimemo.mobile.data.ScheduleRepository
 import cn.aimemo.mobile.reminder.NotificationHelper
 import cn.aimemo.mobile.reminder.ReminderScheduler
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 class AiMemoApplication : Application() {
+    private val _reminderEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val reminderEvents = _reminderEvents.asSharedFlow()
+
     lateinit var preferences: AppPreferences
         private set
     lateinit var database: ScheduleDatabase
@@ -28,5 +33,9 @@ class AiMemoApplication : Application() {
         )
         accountingRepository = AccountingRepository(database)
         NotificationHelper.createChannel(this)
+    }
+
+    fun notifyReminderLogged() {
+        _reminderEvents.tryEmit(Unit)
     }
 }

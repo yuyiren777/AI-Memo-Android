@@ -6,11 +6,7 @@ import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageDecoder
 import android.net.Uri
-import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,7 +36,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
@@ -48,11 +46,15 @@ import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -82,11 +84,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import cn.aimemo.mobile.ai.ZhipuAiClient
+import cn.aimemo.mobile.ai.AiProvider
 import cn.aimemo.mobile.BuildConfig
 import cn.aimemo.mobile.data.ReminderLog
 import cn.aimemo.mobile.data.Schedule
-import cn.aimemo.mobile.data.ScheduleBackup
+import cn.aimemo.mobile.data.SecureBackupContents
+import cn.aimemo.mobile.data.SecureScheduleBackup
 import cn.aimemo.mobile.data.Urgency
 import cn.aimemo.mobile.reminder.NotificationHelper
 import cn.aimemo.mobile.reminder.formatRemainingTime
@@ -98,7 +101,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
-import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -121,29 +123,38 @@ private data class CompletionChange(
 fun ScheduleListScreen(
     contentPadding: PaddingValues,
     state: AppUiState,
-    onAdd: () -> Unit,
+    onTextRecognition: () -> Unit,
+    onImageRecognition: () -> Unit,
+    onManualAdd: () -> Unit,
     onEdit: (Schedule) -> Unit,
     onCompleted: (Schedule, Boolean) -> Unit,
     onDelete: (Schedule) -> Unit,
     onBatchCompleted: (List<Schedule>) -> Unit,
     onBatchDelete: (List<Schedule>) -> Unit,
-    onImport: (List<Schedule>) -> Unit,
+    onImport: (SecureBackupContents) -> Unit,
+    onDeleteReminderLog: (Long) -> Unit,
+    scheduleFilterMode: String,
+    onScheduleFilterModeChange: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var pendingEncryptedExport by remember { mutableStateOf<String?>(null) }
     val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json"),
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
+        val encryptedBackup = pendingEncryptedExport
+        pendingEncryptedExport = null
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
             runCatching {
+                require(!encryptedBackup.isNullOrBlank()) { "没有可导出的加密备份" }
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use {
-                        it.write(ScheduleBackup.encode(state.schedules))
+                        it.write(encryptedBackup)
                     } ?: error("无法创建备份文件")
                 }
             }.onSuccess {
-                Toast.makeText(context, "日程备份已导出", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "自动加密备份已导出", Toast.LENGTH_SHORT).show()
             }.onFailure {
                 Toast.makeText(context, it.message ?: "导出失败", Toast.LENGTH_LONG).show()
             }
@@ -154,31 +165,56 @@ fun ScheduleListScreen(
         scope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: error("无法读取所选文件")
-                    require(bytes.size <= MAX_BACKUP_BYTES) { "备份文件过大，无法导入" }
-                    ScheduleBackup.decode(bytes.toString(Charsets.UTF_8))
+                    readBackupContent(context, uri)
                 }
-            }.onSuccess(onImport).onFailure {
+            }.onSuccess { content ->
+                runCatching {
+                    withContext(Dispatchers.Default) {
+                        SecureScheduleBackup().decode(content)
+                    }
+                }.onSuccess(onImport).onFailure { error ->
+                    Toast.makeText(context, error.message ?: "导入失败", Toast.LENGTH_LONG).show()
+                }
+            }.onFailure {
                 Toast.makeText(context, it.message ?: "导入失败", Toast.LENGTH_LONG).show()
             }
         }
     }
-    var showCompleted by remember { mutableStateOf(false) }
+    var newMenuExpanded by remember { mutableStateOf(false) }
+    var backupMenuExpanded by remember { mutableStateOf(false) }
+    var filterMenuExpanded by remember { mutableStateOf(false) }
     var selectionMode by remember { mutableStateOf(false) }
     var selectedScheduleIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var pendingCompletion by remember { mutableStateOf<CompletionChange?>(null) }
     var pendingDeletion by remember { mutableStateOf<Schedule?>(null) }
     var pendingBatchAction by remember { mutableStateOf<BatchScheduleAction?>(null) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    val showingCompleted = scheduleFilterMode == "completed"
+    val showingReminderLogs = scheduleFilterMode == "reminded"
+    val remindedScheduleIds = remember(state.reminderLogs) {
+        state.reminderLogs.mapTo(mutableSetOf(), ReminderLog::scheduleId)
+    }
+
+    LaunchedEffect(scheduleFilterMode) {
+        selectionMode = false
+        selectedScheduleIds = emptySet()
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             delay(60_000 - System.currentTimeMillis() % 60_000)
             now = System.currentTimeMillis()
         }
     }
-    val visible by remember(state.schedules, showCompleted) {
-        derivedStateOf { state.schedules.filter { showCompleted || !it.completed } }
+    val visible by remember(state.schedules, state.reminderLogs, scheduleFilterMode) {
+        derivedStateOf {
+            when (scheduleFilterMode) {
+                "completed" -> state.schedules.filter(Schedule::completed)
+                "reminded" -> state.schedules.filter { it.id in remindedScheduleIds }
+                else -> state.schedules.filterNot(Schedule::completed)
+            }
+        }
     }
     val selectedSchedules = state.schedules.filter { it.id in selectedScheduleIds }
     val selectedPendingSchedules = selectedSchedules.filterNot(Schedule::completed)
@@ -279,32 +315,133 @@ fun ScheduleListScreen(
                 Text("日程概览", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text("${state.schedules.count { !it.completed }} 项待处理", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Box {
+                Button(onClick = { newMenuExpanded = true }) {
+                    Icon(Icons.Outlined.Add, null)
+                    Spacer(Modifier.width(5.dp))
+                    Text("新建")
+                    Icon(Icons.Outlined.ArrowDropDown, null)
+                }
+                DropdownMenu(
+                    expanded = newMenuExpanded,
+                    onDismissRequest = { newMenuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("文字识别") },
+                        leadingIcon = { Icon(Icons.Outlined.TextFields, null) },
+                        onClick = {
+                            newMenuExpanded = false
+                            onTextRecognition()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("图片识别") },
+                        leadingIcon = { Icon(Icons.Outlined.Image, null) },
+                        onClick = {
+                            newMenuExpanded = false
+                            onImageRecognition()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("手动添加") },
+                        leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                        onClick = {
+                            newMenuExpanded = false
+                            onManualAdd()
+                        },
+                    )
+                }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             OutlinedButton(
                 onClick = {
                     selectionMode = !selectionMode
                     selectedScheduleIds = emptySet()
                 },
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 12.dp),
             ) { Text(if (selectionMode) "取消多选" else "多选") }
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = onAdd) {
-                Icon(Icons.Outlined.Add, null)
-                Spacer(Modifier.width(5.dp))
-                Text("新建")
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(
+                    onClick = { backupMenuExpanded = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                ) {
+                    Text("备份")
+                    Icon(Icons.Outlined.ArrowDropDown, null)
+                }
+                DropdownMenu(
+                    expanded = backupMenuExpanded,
+                    onDismissRequest = { backupMenuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("导入本机备份") },
+                        leadingIcon = { Icon(Icons.Outlined.FileDownload, null) },
+                        onClick = {
+                            backupMenuExpanded = false
+                            importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("导出自动加密备份") },
+                        leadingIcon = { Icon(Icons.Outlined.FileUpload, null) },
+                        onClick = {
+                            backupMenuExpanded = false
+                            val contents = SecureBackupContents(
+                                schedules = state.schedules.toList(),
+                                accountEntries = state.accountEntries.toList(),
+                                budgetSettings = state.budgetSettings,
+                            )
+                            scope.launch {
+                                runCatching {
+                                    withContext(Dispatchers.Default) {
+                                        SecureScheduleBackup().encode(contents)
+                                    }
+                                }.onSuccess { encrypted ->
+                                    pendingEncryptedExport = encrypted
+                                    exportLauncher.launch("AI备忘录自动加密备份_${LocalDate.now()}.aimemo")
+                                }.onFailure { error ->
+                                    Toast.makeText(context, error.message ?: "创建加密备份失败", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        },
+                    )
+                }
             }
-        }
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-        ) {
-            OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }) {
-                Icon(Icons.Outlined.FileDownload, null)
-                Spacer(Modifier.width(5.dp))
-                Text("导入备份")
-            }
-            OutlinedButton(onClick = { exportLauncher.launch("AI备忘录日程备份_${LocalDate.now()}.aimemo") }) {
-                Icon(Icons.Outlined.FileUpload, null)
-                Spacer(Modifier.width(5.dp))
-                Text("导出备份")
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(
+                    onClick = { filterMenuExpanded = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                ) {
+                    Text("筛选")
+                    Icon(Icons.Outlined.ArrowDropDown, null)
+                }
+                DropdownMenu(
+                    expanded = filterMenuExpanded,
+                    onDismissRequest = { filterMenuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("显示已完成日程") },
+                        leadingIcon = { Checkbox(showingCompleted, onCheckedChange = null) },
+                        onClick = {
+                            filterMenuExpanded = false
+                            onScheduleFilterModeChange(if (showingCompleted) "normal" else "completed")
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("显示已提醒日程") },
+                        leadingIcon = { Checkbox(showingReminderLogs, onCheckedChange = null) },
+                        onClick = {
+                            filterMenuExpanded = false
+                            onScheduleFilterModeChange(if (showingReminderLogs) "normal" else "reminded")
+                        },
+                    )
+                }
             }
         }
         if (selectionMode) {
@@ -337,22 +474,72 @@ fun ScheduleListScreen(
                 ) { Text("删除所选") }
             }
         }
-        Row(
-            Modifier.fillMaxWidth().clickable { showCompleted = !showCompleted }.padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Checkbox(showCompleted, { showCompleted = it })
-            Text("显示已完成日程")
-        }
         Spacer(Modifier.height(6.dp))
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            visible.isEmpty() -> EmptyScheduleState(onAdd)
+            showingReminderLogs -> LazyColumn(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 18.dp),
+            ) {
+                item(key = "reminder_log_header") {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "已提醒日程",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("${visible.size} 项", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (visible.isEmpty()) {
+                    item(key = "empty_reminder_logs") {
+                        Text(
+                            "还没有符合条件的已提醒日程",
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    items(visible, key = Schedule::id) { schedule ->
+                        ScheduleCard(
+                            schedule = schedule,
+                            nowMillis = now,
+                            selectionMode = false,
+                            selected = false,
+                            onSelectionChanged = {},
+                            onEdit = { onEdit(schedule) },
+                            onCompletedRequested = { completed ->
+                                pendingCompletion = CompletionChange(schedule, completed)
+                            },
+                            onDeleteRequested = { pendingDeletion = schedule },
+                        )
+                    }
+                }
+            }
+            visible.isEmpty() -> {
+                if (scheduleFilterMode == "normal") EmptyScheduleState()
+                else FilteredScheduleEmptyState()
+            }
             else -> LazyColumn(
                 Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 18.dp),
             ) {
+                if (visible.isEmpty()) {
+                    item(key = "empty_schedule_filter") {
+                        Text(
+                            "当前没有符合筛选条件的日程",
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 22.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 groups.forEach { group ->
                     item(key = "group_${group.title}") {
                         Row(
@@ -396,14 +583,42 @@ fun ScheduleListScreen(
 }
 
 @Composable
-private fun EmptyScheduleState(onAdd: () -> Unit) {
+private fun EmptyScheduleState() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Outlined.EventAvailable, null, Modifier.size(58.dp), tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(12.dp))
             Text("还没有待办日程", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(16.dp))
-            OutlinedButton(onClick = onAdd) { Text("添加第一条日程") }
+        }
+    }
+}
+
+@Composable
+private fun FilteredScheduleEmptyState() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            "当前没有符合筛选条件的日程",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ReminderLogCard(log: ReminderLog, onDelete: () -> Unit) {
+    OutlinedCard(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("${stageLabel(log.stage)}：${log.scheduleTitle}", fontWeight = FontWeight.Bold)
+                Text(
+                    EXPORT_TIME_FORMATTER.format(
+                        LocalDateTime.ofInstant(Instant.ofEpochMilli(log.createdAt), ZoneId.systemDefault())
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onDelete) {
+                Icon(Icons.Outlined.DeleteOutline, "删除提醒记录", tint = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }
@@ -589,6 +804,8 @@ fun ScheduleEditorScreen(
 fun SmartAddScreen(
     contentPadding: PaddingValues,
     state: AppUiState,
+    initialMode: String,
+    onBack: () -> Unit,
     onRecognizeText: (String) -> Unit,
     onRecognizeImages: (List<Pair<ByteArray, String>>) -> Unit,
     onManualAdd: () -> Unit,
@@ -598,18 +815,23 @@ fun SmartAddScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var mode by remember { mutableStateOf("text") }
+    var mode by remember(initialMode) { mutableStateOf(initialMode) }
     var input by remember { mutableStateOf("") }
     var imageName by remember { mutableStateOf("") }
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     val processUris: (List<Uri>) -> Unit = { uris ->
-        val selected = uris.take(MAX_SELECTED_IMAGES)
+        val selected = uris.take(MAX_AI_IMAGE_COUNT)
         imageName = "正在读取 1/${selected.size} 张图片…"
         scope.launch {
             val images = mutableListOf<Pair<ByteArray, String>>()
             val failures = mutableListOf<String>()
             selected.forEachIndexed { index, uri ->
                 imageName = "正在读取第 ${index + 1}/${selected.size} 张图片…"
-                runCatching { withContext(Dispatchers.IO) { prepareImage(context, uri) } }
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        prepareAiImage(context, uri, SCHEDULE_IMAGE_PROFILE)
+                    }
+                }
                     .onSuccess { images.add(it) }
                     .onFailure { failures += it.message ?: "无法读取第 ${index + 1} 张图片" }
             }
@@ -627,8 +849,20 @@ fun SmartAddScreen(
         }
     }
     val picker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(MAX_SELECTED_IMAGES)
+        ActivityResultContracts.PickMultipleVisualMedia(MAX_AI_IMAGE_COUNT)
     ) { uris -> if (uris.isNotEmpty()) processUris(uris) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { captured ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (captured && uri != null) {
+            processUris(listOf(uri))
+        } else if (uri != null) {
+            runCatching { context.contentResolver.delete(uri, null, null) }
+            imageName = "已取消拍照"
+        }
+    }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(contentPadding),
@@ -636,8 +870,13 @@ fun SmartAddScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            Text("智能添加", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text("把聊天记录、通知或截图交给 AI，识别成日程后可逐条修改。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回日程") }
+                Column {
+                    Text("智能添加", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text("把聊天记录、通知或截图交给 AI，识别成日程后可逐条修改。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -665,18 +904,43 @@ fun SmartAddScreen(
                 Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Icon(Icons.Outlined.Image, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
                     Text(imageName.ifBlank { "选择通知、聊天或考试时间截图" })
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                             enabled = !state.recognizing,
-                        ) { Text("选择图片（最多4张）") }
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) {
+                            Icon(Icons.Outlined.Image, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("相册（最多4张）")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                runCatching { createCameraImageUri(context) }
+                                    .onSuccess { uri ->
+                                        pendingCameraUri = uri
+                                        cameraLauncher.launch(uri)
+                                    }
+                                    .onFailure { imageName = it.message ?: "无法打开相机" }
+                            },
+                            enabled = !state.recognizing,
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) {
+                            Icon(Icons.Outlined.PhotoCamera, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("拍照")
+                        }
                         OutlinedButton(
                             onClick = {
                                 clipboardImageUri(context)?.let { processUris(listOf(it)) }
                                     ?: run { imageName = "剪贴板中没有可读取的图片" }
                             },
                             enabled = !state.recognizing,
-                        ) { Icon(Icons.Outlined.ContentPaste, null); Spacer(Modifier.width(5.dp)); Text("粘贴截图") }
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) { Icon(Icons.Outlined.ContentPaste, null); Spacer(Modifier.width(4.dp)); Text("粘贴") }
                     }
                 }
             }
@@ -712,83 +976,270 @@ fun SmartAddScreen(
 }
 
 @Composable
-fun ReminderHistoryScreen(contentPadding: PaddingValues, logs: List<ReminderLog>, onDelete: (Long) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(contentPadding).padding(horizontal = 16.dp)) {
-        Text("提醒记录", Modifier.padding(top = 16.dp, bottom = 12.dp), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        if (logs.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("还没有提醒记录", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        else LazyColumn(verticalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(bottom = 18.dp)) {
-            items(logs, key = ReminderLog::id) { log ->
-                OutlinedCard(Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("${stageLabel(log.stage)}：${log.scheduleTitle}", fontWeight = FontWeight.Bold)
-                            Text(EXPORT_TIME_FORMATTER.format(LocalDateTime.ofInstant(Instant.ofEpochMilli(log.createdAt), ZoneId.systemDefault())), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        IconButton({ onDelete(log.id) }) { Icon(Icons.Outlined.DeleteOutline, "删除记录", tint = MaterialTheme.colorScheme.error) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun SettingsScreen(
     contentPadding: PaddingValues,
     state: AppUiState,
-    onDarkModeChanged: (Boolean) -> Unit,
+    onThemeModeChanged: (String) -> Unit,
     onReminderSettingsChanged: (Int, Int?, Int?) -> Unit,
-    onModelSettingsChanged: (String, String, String, String, String) -> Unit,
+    onAiProviderChanged: (String) -> Unit,
+    onEnableCaptureProtection: () -> Unit,
+    onDisableCaptureProtection: suspend (CharArray, CharArray?) -> String?,
+    onModelSettingsChanged: (String, String, String, String, String, String) -> Unit,
+    onClearApiKey: () -> Unit,
     onTestConnection: () -> Unit,
 ) {
+    var provider by remember(state.aiProvider) { mutableStateOf(state.aiProvider) }
     var mode by remember(state.modelMode) { mutableStateOf(state.modelMode) }
-    var apiKey by remember(state.apiKey) { mutableStateOf(state.apiKey) }
+    var apiKey by remember { mutableStateOf("") }
     var unified by remember(state.unifiedModel) { mutableStateOf(state.unifiedModel) }
     var textModel by remember(state.textModel) { mutableStateOf(state.textModel) }
     var imageModel by remember(state.imageModel) { mutableStateOf(state.imageModel) }
+    var providerMenuExpanded by remember { mutableStateOf(false) }
+    var modelModeMenuExpanded by remember { mutableStateOf(false) }
+    var showCaptureProtectionWarning by remember { mutableStateOf(false) }
+    var showCapturePasswordDialog by remember { mutableStateOf(false) }
+    var capturePassword by remember { mutableStateOf("") }
+    var capturePasswordConfirmation by remember { mutableStateOf("") }
+    var capturePasswordError by remember { mutableStateOf<String?>(null) }
+    var verifyingCapturePassword by remember { mutableStateOf(false) }
     var finalParts by remember(state.finalReminderMinutes) { mutableStateOf(minutesToParts(state.finalReminderMinutes)) }
     var firstEnabled by remember(state.firstReminderMinutes) { mutableStateOf(state.firstReminderMinutes != null) }
     var firstParts by remember(state.firstReminderMinutes) { mutableStateOf(minutesToParts(state.firstReminderMinutes ?: 0)) }
     var secondEnabled by remember(state.secondReminderMinutes) { mutableStateOf(state.secondReminderMinutes != null) }
     var secondParts by remember(state.secondReminderMinutes) { mutableStateOf(minutesToParts(state.secondReminderMinutes ?: 0)) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val selectedProvider = AiProvider.fromId(provider)
+
+    if (showCaptureProtectionWarning) {
+        AlertDialog(
+            onDismissRequest = { showCaptureProtectionWarning = false },
+            title = { Text("关闭截图与录屏保护？") },
+            text = {
+                Text("关闭后，应用中的日程、账单、API 配置等画面可以被截图或录屏，可能造成隐私泄露。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showCaptureProtectionWarning = false
+                        capturePassword = ""
+                        capturePasswordConfirmation = ""
+                        capturePasswordError = null
+                        showCapturePasswordDialog = true
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text("继续关闭") }
+            },
+            dismissButton = { TextButton(onClick = { showCaptureProtectionWarning = false }) { Text("保持开启") } },
+        )
+    }
+
+    if (showCapturePasswordDialog) {
+        val creatingPassword = !state.hasCaptureProtectionPassword
+        AlertDialog(
+            onDismissRequest = {
+                if (!verifyingCapturePassword) {
+                    showCapturePasswordDialog = false
+                    capturePassword = ""
+                    capturePasswordConfirmation = ""
+                    capturePasswordError = null
+                }
+            },
+            title = { Text(if (creatingPassword) "设置安全密码" else "验证安全密码") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        if (creatingPassword) {
+                            "密码无法找回，请务必记住。以后每次关闭截图与录屏保护时都需要输入该密码。"
+                        } else {
+                            "请输入之前设置的安全密码，验证后才能关闭截图与录屏保护。"
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = capturePassword,
+                        onValueChange = {
+                            capturePassword = it.take(128)
+                            capturePasswordError = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("安全密码") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                    )
+                    if (creatingPassword) {
+                        OutlinedTextField(
+                            value = capturePasswordConfirmation,
+                            onValueChange = {
+                                capturePasswordConfirmation = it.take(128)
+                                capturePasswordError = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("再次输入安全密码") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                        )
+                    }
+                    capturePasswordError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        when {
+                            capturePassword.length < 8 -> capturePasswordError = "安全密码至少需要 8 位"
+                            creatingPassword && capturePassword != capturePasswordConfirmation -> {
+                                capturePasswordError = "两次输入的密码不一致"
+                            }
+                            else -> scope.launch {
+                                verifyingCapturePassword = true
+                                val error = onDisableCaptureProtection(
+                                    capturePassword.toCharArray(),
+                                    if (creatingPassword) capturePasswordConfirmation.toCharArray() else null,
+                                )
+                                verifyingCapturePassword = false
+                                if (error == null) {
+                                    showCapturePasswordDialog = false
+                                    capturePassword = ""
+                                    capturePasswordConfirmation = ""
+                                    capturePasswordError = null
+                                } else {
+                                    capturePasswordError = error
+                                }
+                            }
+                        }
+                    },
+                    enabled = !verifyingCapturePassword,
+                ) {
+                    if (verifyingCapturePassword) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(if (verifyingCapturePassword) "验证中…" else "确认关闭")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showCapturePasswordDialog = false
+                        capturePassword = ""
+                        capturePasswordConfirmation = ""
+                        capturePasswordError = null
+                    },
+                    enabled = !verifyingCapturePassword,
+                ) { Text("取消") }
+            },
+        )
+    }
 
     Column(Modifier.fillMaxSize().padding(contentPadding).verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("设置", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         OutlinedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("AI 模型", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Text("API Key 仅保存在本机。默认模型服务为智谱。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://open.bigmodel.cn/"))) }) { Text("点我申请智谱 API Key") }
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    FilterChip(
-                        mode == "unified",
-                        { mode = "unified" },
-                        label = { Text("只用视觉理解模型同时处理文字图片") },
+                Text("API Key 已加密保存在本机。当前服务：${selectedProvider.label}。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(selectedProvider.apiKeyUrl))) }) { Text("点我申请${selectedProvider.label} API Key") }
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { providerMenuExpanded = true },
                         modifier = Modifier.fillMaxWidth(),
-                    )
-                    FilterChip(
-                        mode == "separate",
-                        { mode = "separate" },
-                        label = { Text("文本 / 视觉理解分开") },
+                    ) {
+                        Text("AI 服务：${selectedProvider.label}", modifier = Modifier.weight(1f))
+                        Icon(Icons.Outlined.ArrowDropDown, contentDescription = "选择 AI 服务")
+                    }
+                    DropdownMenu(
+                        expanded = providerMenuExpanded,
+                        onDismissRequest = { providerMenuExpanded = false },
                         modifier = Modifier.fillMaxWidth(),
-                    )
+                    ) {
+                        AiProvider.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = {
+                                    provider = option.id
+                                    apiKey = ""
+                                    providerMenuExpanded = false
+                                    onAiProviderChanged(option.id)
+                                },
+                            )
+                        }
+                    }
                 }
-                OutlinedTextField(apiKey, { apiKey = it }, Modifier.fillMaxWidth(), label = { Text("API Key（必填）") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
-                if (mode == "unified") OutlinedTextField(unified, { unified = it }, Modifier.fillMaxWidth(), label = { Text("视觉理解模型（留空用 ${ZhipuAiClient.DEFAULT_IMAGE_MODEL}）") }, singleLine = true)
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { modelModeMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (mode == "separate") "文本 / 视觉理解分开（推荐）" else "只用视觉理解模型同时处理文字图片",
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(Icons.Outlined.ArrowDropDown, contentDescription = "选择模型模式")
+                    }
+                    DropdownMenu(
+                        expanded = modelModeMenuExpanded,
+                        onDismissRequest = { modelModeMenuExpanded = false },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("文本 / 视觉理解分开（推荐）") },
+                            onClick = {
+                                mode = "separate"
+                                modelModeMenuExpanded = false
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("只用视觉理解模型同时处理文字图片") },
+                            onClick = {
+                                mode = "unified"
+                                modelModeMenuExpanded = false
+                            },
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    apiKey,
+                    { apiKey = it },
+                    Modifier.fillMaxWidth(),
+                    label = { Text(if (state.hasApiKey) "API Key（已保存）" else "API Key（必填）") },
+                    supportingText = if (state.hasApiKey) {
+                        { Text("留空表示继续使用已保存的 Key；输入新值可替换。") }
+                    } else {
+                        null
+                    },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                )
+                if (state.hasApiKey) {
+                    TextButton(
+                        onClick = {
+                            apiKey = ""
+                            onClearApiKey()
+                        },
+                        modifier = Modifier.align(Alignment.End),
+                    ) { Text("清除已保存 Key") }
+                }
+                if (mode == "unified") OutlinedTextField(unified, { unified = it }, Modifier.fillMaxWidth(), label = { Text("视觉理解模型（留空用 ${selectedProvider.defaultImageModel}）") }, singleLine = true)
                 else {
-                    OutlinedTextField(textModel, { textModel = it }, Modifier.fillMaxWidth(), label = { Text("文本模型（留空用 ${ZhipuAiClient.DEFAULT_TEXT_MODEL}）") }, singleLine = true)
-                    OutlinedTextField(imageModel, { imageModel = it }, Modifier.fillMaxWidth(), label = { Text("视觉理解模型（留空用 ${ZhipuAiClient.DEFAULT_IMAGE_MODEL}）") }, singleLine = true)
+                    OutlinedTextField(textModel, { textModel = it }, Modifier.fillMaxWidth(), label = { Text("文本模型（留空用 ${selectedProvider.defaultTextModel}）") }, singleLine = true)
+                    OutlinedTextField(imageModel, { imageModel = it }, Modifier.fillMaxWidth(), label = { Text("视觉理解模型（留空用 ${selectedProvider.defaultImageModel}）") }, singleLine = true)
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
                     OutlinedButton(
                         onClick = {
-                            onModelSettingsChanged(mode, apiKey, unified, textModel, imageModel)
+                            onModelSettingsChanged(provider, mode, apiKey, unified, textModel, imageModel)
+                            apiKey = ""
                             onTestConnection()
                         },
-                        enabled = apiKey.isNotBlank() && !state.recognizing,
+                        enabled = (apiKey.isNotBlank() || state.hasApiKey) && !state.recognizing,
                     ) { Text("测试连接") }
-                    Button({ onModelSettingsChanged(mode, apiKey, unified, textModel, imageModel) }, enabled = apiKey.isNotBlank()) { Text("保存模型") }
+                    Button(
+                        onClick = {
+                            onModelSettingsChanged(provider, mode, apiKey, unified, textModel, imageModel)
+                            apiKey = ""
+                        },
+                        enabled = apiKey.isNotBlank() || state.hasApiKey,
+                    ) { Text("保存模型") }
                 }
                 if (state.recognizing) {
                     Row(
@@ -824,17 +1275,38 @@ fun SettingsScreen(
             }
         }
         OutlinedCard(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("外观", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                SettingSwitchRow("夜间主题", state.darkMode, onDarkModeChanged)
+                Text("选择日间、柔和或夜间主题；首次打开默认使用柔和模式。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = state.themeMode == "light",
+                        onClick = { onThemeModeChanged("light") },
+                        label = { Text("日间") },
+                        modifier = Modifier.weight(1f),
+                    )
+                    FilterChip(
+                        selected = state.themeMode == "soft",
+                        onClick = { onThemeModeChanged("soft") },
+                        label = { Text("柔和") },
+                        modifier = Modifier.weight(1f),
+                    )
+                    FilterChip(
+                        selected = state.themeMode == "dark",
+                        onClick = { onThemeModeChanged("dark") },
+                        label = { Text("夜间") },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
         OutlinedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("通知显示", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "“提醒后台服务运行中”通知表示退出界面后仍可提醒。清理后台应用时，可以下滑或者长按锁住本应用（不同手机厂商锁住方式不同），防止提醒失灵（我已经尽力了，还是没法防后台清理提醒功能）",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "“提醒后台服务运行中”通知表示退出界面后仍可提醒。清理后台应用时，可以下滑或者长按锁住本应用（不同手机厂商锁住方式不同），防止提醒失灵（我已经尽力了，还是没法防后台清理提醒功能）。所以重要日程还是自己定闹钟比较合适，后面我也会考虑用服务器推送实现24小时提醒。",
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold,
                 )
                 Button(
                     onClick = {
@@ -851,9 +1323,24 @@ fun SettingsScreen(
         OutlinedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("隐私与数据", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Text("日程只保存在本机；仅在进行 AI 识别时，将当前文字或图片发送给智谱模型服务。")
+                Text("API Key、日程、账单、提醒历史、自定义分类和预算设置均已加密保存在本机；仅在进行 AI 识别或用户主动分析收支时，发送本次选择的文字、图片或当前周期汇总给${selectedProvider.label}模型服务。")
                 HorizontalDivider()
-                Text("联系开发者：哔站号 UID:402333061")
+                SettingSwitchRow("截图与录屏保护", state.captureProtectionEnabled) { enabled ->
+                    if (enabled) {
+                        onEnableCaptureProtection()
+                    } else {
+                        showCaptureProtectionWarning = true
+                    }
+                }
+                Text(
+                    if (state.captureProtectionEnabled) "当前禁止应用内截图和录屏" else "当前允许应用内截图和录屏",
+                    color = if (state.captureProtectionEnabled) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                )
+                HorizontalDivider()
                 Text("AI备忘录 Android · ${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -888,6 +1375,24 @@ private fun SettingSwitchRow(title: String, checked: Boolean, onCheckedChange: (
 
 private fun minutesToParts(total: Int) = Triple((total / 1440).toString(), ((total % 1440) / 60).toString(), (total % 60).toString())
 private fun partsToMinutes(parts: Triple<String, String, String>) = (parts.first.toIntOrNull() ?: 0) * 1440 + (parts.second.toIntOrNull() ?: 0) * 60 + (parts.third.toIntOrNull() ?: 0)
+
+private fun readBackupContent(context: Context, uri: Uri): String {
+    return context.contentResolver.openInputStream(uri)?.use { input ->
+        ByteArrayOutputStream().use { output ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var total = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                require(total <= MAX_BACKUP_BYTES) { "备份文件过大，无法导入" }
+                output.write(buffer, 0, read)
+            }
+            output.toString(Charsets.UTF_8.name())
+        }
+    } ?: error("无法读取所选文件")
+}
+
 private fun stageLabel(key: String) = when (key) { "first" -> "第一次提醒"; "second" -> "第二次提醒"; else -> "最后一次提醒" }
 private fun repeatLabel(rule: String) = when { rule == "daily" -> "每天"; rule.startsWith("weekly") -> "每周"; rule.startsWith("monthly") -> "每月"; else -> "不重复" }
 
@@ -916,83 +1421,8 @@ private fun clipboardImageUri(context: Context): Uri? {
     return clip.getItemAt(0).uri
 }
 
-private fun prepareImage(context: Context, uri: Uri): Pair<ByteArray, String> {
-    val temporary = File.createTempFile("ai_memo_image_", ".source", context.cacheDir)
-    try {
-        try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                temporary.outputStream().buffered().use { output -> input.copyTo(output) }
-            } ?: error("相册没有返回可读取的图片，请重新选择")
-        } catch (_: SecurityException) {
-            error("图片读取权限已失效，请重新选择图片")
-        }
-        require(temporary.length() > 0L) { "这张图片没有有效内容，请重新选择" }
-        require(temporary.length() <= MAX_IMAGE_SOURCE_BYTES) { "图片文件过大，请选择小于 30 MB 的图片" }
-
-        val original = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            decodeModernImage(temporary)
-        } else {
-            decodeLegacyImage(temporary)
-        }
-        val scale = minOf(1f, MAX_IMAGE_EDGE.toFloat() / maxOf(original.width, original.height))
-        val bitmap = if (scale < 1f) {
-            Bitmap.createScaledBitmap(
-                original,
-                (original.width * scale).toInt().coerceAtLeast(1),
-                (original.height * scale).toInt().coerceAtLeast(1),
-                true,
-            )
-        } else original
-        return ByteArrayOutputStream().use { output ->
-            check(bitmap.compress(Bitmap.CompressFormat.JPEG, 88, output)) { "图片转换失败，请换一张图片重试" }
-            output.toByteArray() to "image/jpeg"
-        }.also {
-            if (bitmap !== original) bitmap.recycle()
-            original.recycle()
-        }
-    } finally {
-        temporary.delete()
-    }
-}
-
-@androidx.annotation.RequiresApi(Build.VERSION_CODES.P)
-private fun decodeModernImage(file: File): Bitmap = try {
-    ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, info, _ ->
-        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-        val longest = maxOf(info.size.width, info.size.height)
-        if (longest > MAX_IMAGE_EDGE) {
-            val scale = MAX_IMAGE_EDGE.toFloat() / longest
-            decoder.setTargetSize(
-                (info.size.width * scale).toInt().coerceAtLeast(1),
-                (info.size.height * scale).toInt().coerceAtLeast(1),
-            )
-        }
-    }
-} catch (_: Exception) {
-    error("暂时无法解析这种图片格式，请换用 JPG、PNG、WebP 或系统截图")
-}
-
-private fun decodeLegacyImage(file: File): Bitmap {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeFile(file.absolutePath, bounds)
-    require(bounds.outWidth > 0 && bounds.outHeight > 0) {
-        "暂时无法解析这种图片格式，请换用 JPG、PNG、WebP 或系统截图"
-    }
-    var sampleSize = 1
-    while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > MAX_IMAGE_EDGE * 2) sampleSize *= 2
-    val options = BitmapFactory.Options().apply {
-        inSampleSize = sampleSize
-        inPreferredConfig = Bitmap.Config.ARGB_8888
-    }
-    return BitmapFactory.decodeFile(file.absolutePath, options)
-        ?: error("暂时无法解析这种图片格式，请换用 JPG、PNG、WebP 或系统截图")
-}
-
 private val SCHEDULE_DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy年M月d日 EEEE")
 private val DATE_PICKER_FORMATTER = DateTimeFormatter.ofPattern("yyyy年M月d日")
 private val TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm")
 private val EXPORT_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-private const val MAX_IMAGE_EDGE = 2048
-private const val MAX_IMAGE_SOURCE_BYTES = 30L * 1024L * 1024L
-private const val MAX_SELECTED_IMAGES = 4
-private const val MAX_BACKUP_BYTES = 5 * 1024 * 1024
+private const val MAX_BACKUP_BYTES = 20 * 1024 * 1024

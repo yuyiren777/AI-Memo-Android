@@ -58,6 +58,7 @@ class ReminderGuardService : Service() {
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .build()
     }
 

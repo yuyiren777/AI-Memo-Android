@@ -37,4 +37,5 @@ data class ReminderLog(
     val stage: String,
     val message: String,
     val createdAt: Long = System.currentTimeMillis(),
+    val seen: Boolean = false,
 )

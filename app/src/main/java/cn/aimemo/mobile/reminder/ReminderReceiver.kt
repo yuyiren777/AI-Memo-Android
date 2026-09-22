@@ -22,6 +22,7 @@ class ReminderReceiver : BroadcastReceiver() {
             ?: return
         NotificationHelper.showSchedule(context, schedule, stageLabel, stageKey)
         application.database.addReminderLog(schedule, stageKey, stageLabel)
+        application.notifyReminderLogged()
         if (stageKey == "final" && schedule.repeatRule != "none") {
             val pending = goAsync()
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {

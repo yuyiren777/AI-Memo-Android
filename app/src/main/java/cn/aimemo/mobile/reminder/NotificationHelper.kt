@@ -23,7 +23,7 @@ import java.time.format.DateTimeFormatter
 import java.time.ZoneId
 
 object NotificationHelper {
-    private const val CHANNEL_ID = "schedule_reminders_heads_up_v3"
+    private const val CHANNEL_ID = "schedule_reminders_heads_up_v4_private"
     private val DATE_FORMATTER = DateTimeFormatter.ofPattern("M月d日")
     private val TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm")
 
@@ -44,7 +44,7 @@ object NotificationHelper {
             vibrationPattern = longArrayOf(0, 260, 140, 260)
             enableLights(true)
             lightColor = Color.rgb(36, 123, 118)
-            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+            lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
             setShowBadge(true)
         }
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -177,7 +177,7 @@ object NotificationHelper {
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setDefaults(NotificationCompat.DEFAULT_SOUND or NotificationCompat.DEFAULT_VIBRATE)
             .setVibrate(longArrayOf(0, 260, 140, 260))
             .setOnlyAlertOnce(false)

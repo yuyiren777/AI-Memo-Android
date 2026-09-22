@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.viewModels
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,8 +32,17 @@ class MainActivity : ComponentActivity() {
         appViewModel.refresh()
     }
 
+    override fun onStop() {
+        appViewModel.clearSensitiveMemory()
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            window.setHideOverlayWindows(true)
+        }
         ReminderGuardService.start(this)
         enableEdgeToEdge()
         setContent {
@@ -51,6 +61,14 @@ class MainActivity : ComponentActivity() {
                 ActivityResultContracts.RequestPermission()
             ) { granted -> notificationPermissionGranted = granted }
 
+            LaunchedEffect(state.captureProtectionEnabled) {
+                if (state.captureProtectionEnabled) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+
             LaunchedEffect(Unit) {
                 if (
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -67,12 +85,14 @@ class MainActivity : ComponentActivity() {
                     launchReminderShown = true
                     NotificationHelper.showUndatedSummary(
                         this@MainActivity,
-                        state.schedules.filter { !it.completed && it.date == null },
+                        state.schedules.filter {
+                            !it.completed && it.date == null && it.repeatRule == "none"
+                        },
                     )
                 }
             }
 
-            AiMemoTheme(darkTheme = state.darkMode) {
+            AiMemoTheme(themeMode = state.themeMode) {
                 AiMemoApp(viewModel = appViewModel, state = state)
             }
         }
