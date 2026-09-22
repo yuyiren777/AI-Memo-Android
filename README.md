@@ -4,7 +4,7 @@
 
 ## 下载最新版
 
-**[直接下载 AI-Memo-Android v0.9.5 APK](https://github.com/yuyiren777/AI-Memo-Android/releases/download/v0.9.5/AI-Memo-Android-v0.9.5.apk)**
+**[直接下载 AI-Memo-Android v0.9.6 APK](https://github.com/yuyiren777/AI-Memo-Android/releases/download/v0.9.6/AI-Memo-Android-v0.9.6.apk)**
 
 也可以进入 [Releases 页面](https://github.com/yuyiren777/AI-Memo-Android/releases/latest) 查看最新版本和安装包。
 
@@ -16,6 +16,7 @@
 - 日程和记账图片识别均支持直接拍照，记账图片仍限制最多 4 张
 - 手动新建、编辑、完成、恢复、删除和批量管理日程
 - 日期、起止时间、地点、备注、紧急程度和重复安排
+- 重复安排按设置时间提醒，未设置时间默认 12:00，错过周期自动顺延
 - 三阶段系统提醒，支持重启、系统时间和时区变化后恢复安排
 - 提醒历史、未读红点和未读数量
 - 本地加密备份与恢复，无需用户记忆备份密码
@@ -65,4 +66,4 @@ app/src/main/java/cn/aimemo/mobile/
 └── ui/          Compose 页面和主题
 ```
 
-当前公开版本：`v0.9.5`
+当前公开版本：`v0.9.6`

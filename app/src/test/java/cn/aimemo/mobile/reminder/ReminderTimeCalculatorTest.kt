@@ -81,4 +81,18 @@ class ReminderTimeCalculatorTest {
         assertEquals(1, plan.size)
         assertEquals(now.plusSeconds(3), plan.single().trigger)
     }
+
+    @Test
+    fun repeatedDateOnlyScheduleMovesToTomorrowAfterNoon() {
+        val now = Instant.parse("2026-08-03T06:00:00Z")
+        val clock = Clock.fixed(now, zone)
+        val schedule = Schedule(
+            title = "daily",
+            date = LocalDate.of(2026, 8, 3),
+            repeatRule = "daily",
+        )
+        val stages = listOf(ReminderStage("final", "final", 0, 0))
+        val plan = ReminderTimeCalculator.plan(schedule, stages, clock)
+        assertEquals(Instant.parse("2026-08-04T04:00:00Z"), plan.single().trigger)
+    }
 }

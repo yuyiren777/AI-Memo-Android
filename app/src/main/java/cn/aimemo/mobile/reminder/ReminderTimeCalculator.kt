@@ -3,14 +3,21 @@ package cn.aimemo.mobile.reminder
 import cn.aimemo.mobile.data.Schedule
 import java.time.Clock
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
-import java.time.LocalDate
 
 data class PlannedReminder(val stage: ReminderStage, val trigger: Instant)
 
 object ReminderTimeCalculator {
     val dateOnlyDefaultTime: LocalTime = LocalTime.NOON
+
+    fun nextRepeatedDate(date: LocalDate, repeatRule: String): LocalDate? = when {
+        repeatRule == "daily" -> date.plusDays(1)
+        repeatRule.startsWith("weekly") -> date.plusWeeks(1)
+        repeatRule.startsWith("monthly") -> date.plusMonths(1)
+        else -> null
+    }
 
     fun eventInstant(schedule: Schedule, zoneId: ZoneId = ZoneId.systemDefault()): Instant? {
         val date = schedule.date ?: return null
@@ -34,9 +41,21 @@ object ReminderTimeCalculator {
         stages: List<ReminderStage>,
         clock: Clock = Clock.systemDefaultZone(),
     ): List<PlannedReminder> {
-        val event = eventInstant(schedule, clock.zone) ?: return emptyList()
+        var event = eventInstant(schedule, clock.zone) ?: return emptyList()
         val now = clock.instant()
         val finalStage = stages.minByOrNull(ReminderStage::leadMinutes) ?: return emptyList()
+
+        // Recurring events move to their next period after a missed occurrence.
+        if (!event.isAfter(now) && schedule.repeatRule != "none") {
+            var nextDate = schedule.date ?: return emptyList()
+            do {
+                nextDate = nextRepeatedDate(nextDate, schedule.repeatRule) ?: return emptyList()
+                event = nextDate.atTime(schedule.startTime ?: dateOnlyDefaultTime)
+                    .atZone(clock.zone)
+                    .toInstant()
+            } while (!event.isAfter(now))
+        }
+
         if (!event.isAfter(now)) {
             val today = LocalDate.now(clock)
             return if (schedule.startTime == null && schedule.date == today) {

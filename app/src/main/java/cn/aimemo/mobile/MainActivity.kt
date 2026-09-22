@@ -85,7 +85,9 @@ class MainActivity : ComponentActivity() {
                     launchReminderShown = true
                     NotificationHelper.showUndatedSummary(
                         this@MainActivity,
-                        state.schedules.filter { !it.completed && it.date == null },
+                        state.schedules.filter {
+                            !it.completed && it.date == null && it.repeatRule == "none"
+                        },
                     )
                 }
             }
