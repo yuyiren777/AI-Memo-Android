@@ -1,4 +1,14 @@
-# AI备忘录 Android
+# AI备忘录 Android（持续更新中）
+
+原生 Android 日程提醒与本地记账应用，支持 AI 识别日程和账目、系统提醒、收支统计与消费分析，如果你觉得不错，别忘了收藏。后面我会持续更新
+
+## 下载最新版
+
+**[直接下载 AI-Memo-Android v0.9.7 APK](https://github.com/yuyiren777/AI-Memo-Android/releases/download/v0.9.7/AI-Memo-Android-v0.9.7.apk)**
+
+也可以进入 [Releases 页面](https://github.com/yuyiren777/AI-Memo-Android/releases/latest) 查看最新版本和安装包。
+
+当前公开版本：`v0.9.7`
 
 这是与 Windows 桌面端完全分离的原生 Android 客户端，项目目录为
 `D:\VS\AI-Memo-Android`。当前版本已形成从 AI 识别、人工校正到本地提醒的
