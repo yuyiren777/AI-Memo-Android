@@ -1,0 +1,15 @@
+COMPONENT ProtectedPayloadCodec
+
+PROTECT(scope, plaintext)
+    validate the scope and input
+    protected_payload = PRIVATE_SECURITY_IMPLEMENTATION.protect(scope, plaintext)
+    return protected_payload
+
+RECOVER(scope, protected_payload)
+    validate the scope and payload
+    plaintext = PRIVATE_SECURITY_IMPLEMENTATION.recover(scope, protected_payload)
+    reject invalid or modified payloads
+    return plaintext
+
+NOTE
+    The protection format and implementation are intentionally omitted.

@@ -1,0 +1,14 @@
+COMPONENT ProtectedBackupCodec
+
+EXPORT_BACKUP(schedules, accounts, budgets)
+    validate export limits
+    payload = serialize application data
+    return PRIVATE_SECURITY_IMPLEMENTATION.protect_backup(payload)
+
+IMPORT_BACKUP(protected_backup)
+    payload = PRIVATE_SECURITY_IMPLEMENTATION.recover_backup(protected_backup)
+    validate payload format and limits
+    return deserialize application data
+
+NOTE
+    The backup protection format and implementation are intentionally omitted.
