@@ -19,6 +19,7 @@ import cn.aimemo.mobile.data.ReminderLog
 import cn.aimemo.mobile.data.Schedule
 import cn.aimemo.mobile.data.SecureBackupContents
 import cn.aimemo.mobile.data.formatMoney
+import java.time.LocalDate
 import java.util.Collections
 import java.time.YearMonth
 import kotlinx.coroutines.CancellationException
@@ -192,7 +193,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun recognizeText(text: String) = recognize("正在识别文字…") {
-        ScheduleExtractor.parse(aiClient.extractText(text), fallbackText = text)
+        ScheduleExtractor.parse(aiClient.extractText(text), fallbackText = text, today = LocalDate.now())
     }
 
     fun recognizeImages(images: List<Pair<ByteArray, String>>) {

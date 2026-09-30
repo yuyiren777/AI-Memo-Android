@@ -87,7 +87,7 @@ powershell -ExecutionPolicy Bypass -File .\build_apk.ps1
 构建产物：
 
 ```text
-release\AI-Memo-Android-v0.9.6.apk
+release\AI-Memo-Android-v0.9.7.apk
 ```
 
 当前 APK 已启用 R8 代码与资源压缩，并使用开发签名以便覆盖安装测试版本。
